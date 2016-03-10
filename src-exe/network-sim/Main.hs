@@ -9,6 +9,7 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Control.Monad
 import Data.Maybe
+import Control.Concurrent.Async
 
 -- | 48-bit media access control (MAC) address.
 type MAC = Int64
@@ -118,6 +119,14 @@ send payload destination nic n
             throwM $ PortDisconnected (mac nic) n
           Just q ->
             writeTQueue (buffer q) frame
-  
+
+-- | Wait on all ports of a NIC for the next incoming frame. This is a
+-- blocking method.
+receive
+  :: NIC
+  -> IO Frame
+receive
+  = mapM (async . atomically . readTQueue . buffer) . V.toList . ports >=> fmap snd . waitAnyCancel
+    
 main
   = undefined
