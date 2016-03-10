@@ -223,6 +223,26 @@ receiveR
 receiveR i
   = ReaderT $ receive i
 
+--------------
+-- Repeater --     
+--------------
+
+-- | A single-interface repeater, indiscriminately copying a request
+-- on a port to every other port.
+data Repeater = Repeater
+  { interface :: {-# UNPACK #-} !NIC
+  }
+
+newRepeater
+  :: Int -- ^ Number of ports. Pre: positive.
+  -> MAC
+  -> STM Repeater
+newRepeater n mac
+  = Repeater <$> newNIC
+  where
+    newNIC
+      = NIC mac <$> V.replicateM n newPort <*> newTVar True
+    
 ----------
 -- Main -- 
 ----------
