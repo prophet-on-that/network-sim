@@ -1,0 +1,30 @@
+name:                network-sim
+version:             0.1
+synopsis:            Simulating a network
+description:         Please see README.md
+homepage:            http://github.com/prophet-on-that/network-sim
+license:             BSD3
+license-file:        LICENSE
+author:              Alex Bates
+maintainer:          ard.bates@gmail.com
+copyright:           2016 Alex Bates
+build-type:          Simple
+cabal-version:       >=1.10
+
+executable network-sim
+  hs-source-dirs:      src-exe/network-sim
+  main-is:             Main.hs
+  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      base
+    , bytestring == 0.10.*
+    , text == 1.2.*
+    , stm == 2.4.*
+    , stm-containers == 0.2.*
+
+  default-language:    Haskell2010
+  ghc-options: -W
+
+source-repository head
+  type:     git
+  location: https://github.com/githubuser/network-sim
