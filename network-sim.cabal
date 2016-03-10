@@ -18,9 +18,9 @@ executable network-sim
   build-depends:
       base
     , bytestring == 0.10.*
-    , text == 1.2.*
     , stm == 2.4.*
-    , stm-containers == 0.2.*
+    , exceptions == 0.8.*
+    , vector == 0.10.*
 
   default-language:    Haskell2010
   ghc-options: -W

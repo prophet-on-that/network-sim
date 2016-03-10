@@ -1,60 +1,93 @@
 module Main where
 
 import qualified Data.ByteString.Lazy as LB
-import qualified Data.Text as T
 import Control.Concurrent.STM
-import STMContainers.Map (Map)
-import qualified STMContainers.Map as Map
+import Data.Typeable
+import Control.Monad.Catch
+import Data.Int
+import Data.Vector (Vector)
+import qualified Data.Vector as V
+import Control.Monad
+import Data.Maybe
 
-type IntMap = Map Int
+-- | 48-bit media access control (MAC) address.
+type MAC = Int64
+
+type PortNum = Int 
+
+data LinkException
+  = PortAlreadyDisconnected MAC PortNum
+  | PortAlreadyConnected MAC PortNum
+  | NoFreePort MAC
+  deriving (Show, Typeable)
+
+instance Exception LinkException           
 
 data Port = Port
-  { bufferRead :: !(TQueue LB.ByteString)
-  , bufferWrite :: !(TQueue LB.ByteString)
+  { mate :: !(TVar (Maybe Port))
+  , buffer :: !(TQueue LB.ByteString)
   }
 
-type MAC = T.Text             
+newPort :: STM Port
+newPort
+  = Port <$> newTVar Nothing <*> newTQueue
 
--- | Network interface controller
+-- | Network interface controller (NIC).
 data NIC = NIC
   { mac :: {-# UNPACK #-} !MAC
-  , portCounter :: !(TVar Int)
-  , ports :: !(IntMap Port)
+  , ports :: {-# UNPACK #-} !(Vector Port)
   }
 
-newNIC
-  :: MAC
-  -> STM NIC
-newNIC mac'
-  = NIC mac' <$> newTVar 0 <*> Map.new
-
-joinNICs
+-- | Connect two NICs, using the first free port available for each.
+connectNICs
   :: NIC
   -> NIC
   -> STM ()
-joinNICs nic nic' = do
-  (p, p') <- newConnectedPorts
-  addPort p nic
-  addPort p' nic'
+connectNICs nic nic' = do
+  (portNum, p) <- firstFreePort nic
+  (portNum', p') <- firstFreePort nic'
+  checkDisconnected nic portNum p
+  checkDisconnected nic' portNum' p'
+  writeTVar (mate p) (Just p')
+  writeTVar (mate p') (Just p)
   where
-    newConnectedPorts :: STM (Port, Port)
-    newConnectedPorts = do
-      q <- newTQueue
-      q' <- newTQueue
-      return (Port q q', Port q' q)
+    firstFreePort nic = do 
+      free <- fmap (msum . zipWith (fmap . (,)) [0..] . V.toList) . mapM (readTVar . mate) $ ports nic
+      case free of
+        Nothing ->
+          throwM $ NoFreePort (mac nic)
+        Just port ->
+          return port
 
-    addPort
-      :: Port
-      -> NIC
+    checkDisconnected
+      :: NIC
+      -> PortNum
+      -> Port
       -> STM ()
-    addPort port nic = do
-      n <- readTVar $ portCounter nic
-      modifyTVar (portCounter nic) (+ 1)
-      Map.insert port n (ports nic)
+    checkDisconnected nic n p = do
+      q <- readTVar (mate p)
+      when (isJust q) $
+        throwM $ PortAlreadyConnected (mac nic) n
 
-data Node = Node
-  { nics :: !(IntMap NIC)
-  }
+disconnectPort
+  :: NIC
+  -> PortNum
+  -> STM ()
+disconnectPort nic n
+  = case ports nic V.!? n of
+      Nothing ->
+        -- TODO: alert user to index out of bounds error?
+        return ()
+      Just p -> do
+        mate' <- readTVar (mate p)
+        case mate' of
+          Nothing ->
+            throwM $ PortAlreadyDisconnected (mac nic) n
+          Just q -> do
+            -- __NOTE__: We do not check if the mate is already
+            -- disconnected.
+            writeTVar (mate q) Nothing
+            writeTVar (mate p) Nothing
 
 main
   = undefined
