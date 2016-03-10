@@ -12,12 +12,18 @@ import qualified Data.Vector as V
 import Control.Monad
 import Data.Maybe
 import Control.Concurrent.Async
+import Data.Bits (shift)
 import Control.Monad.Reader
 
 -- | 48-bit medium access control (MAC) address.
 type MAC = Int64
 
-type PortNum = Int 
+broadcastAddr :: MAC
+broadcastAddr
+  = shift 2 48 - 1
+
+type PortNum = Int
+type InterfaceNum = Int 
 
 data LinkException
   = PortDisconnected MAC PortNum
@@ -29,15 +35,25 @@ instance Exception LinkException
 
 -- | A simplified representation of an Ethernet frame, assuming a
 -- perfect physical layer.
-data Frame = Frame
-  { destination :: {-# UNPACK #-} !MAC 
-  , source :: {-# UNPACK #-} !MAC
+data Frame a = Frame
+  { destination :: !a 
+  , source :: {-# UNPACK #-} !MAC 
   , payload :: !LB.ByteString
-  } 
+  }
+
+-- | An outbound Ethernet frame.
+type OutFrame = Frame MAC
+
+data Destination
+  = Broadcast
+  | MAC MAC 
+
+-- | An Ethernet frame with parsed destination field.
+type InFrame = Frame Destination 
 
 data Port = Port
   { mate :: !(TVar (Maybe Port))
-  , buffer :: !(TQueue Frame)
+  , buffer :: !(TQueue OutFrame)
   }
 
 newPort :: STM Port
@@ -128,13 +144,27 @@ sendOnNIC payload destination nic n
 -- blocking method.
 receiveOnNIC
   :: NIC
-  -> IO Frame
-receiveOnNIC nic = do
+  -> (NIC -> Frame () -> IO (Maybe (Frame ()))) -- ^ Handler for broadcast frames.
+  -> IO InFrame 
+receiveOnNIC nic handler = do
   -- __NOTE__: by reading the promiscuous setting before initiating
   -- the receieve, we cannot change this setting in-flight.
   promis <- readTVarIO (promiscuous nic)
   asyncs <- mapM (async . atomically . portAction promis) . V.toList . ports $ nic
-  fmap snd . waitAnyCancel $ asyncs
+  frame <- fmap snd . waitAnyCancel $ asyncs
+  let
+    dest
+      = destination frame 
+  if dest == broadcastAddr
+    then do
+      frame' <- handler nic $ frame { destination = () }
+      case frame' of
+        Nothing ->
+          receiveOnNIC nic handler
+        Just frame'' ->
+          return $ frame'' { destination = Broadcast }
+    else
+      return $ frame { destination = MAC dest }
   where
     portAction isPromiscuous p
       = action
@@ -151,42 +181,48 @@ receiveOnNIC nic = do
                 else
                   action
 
-------------------
--- SimpleNodeOp --   
-------------------
+class Node n where
+  interfaces
+    :: n
+    -> Vector NIC -- ^ Vector indexed by 'InterfaceNum'.
+    
+  send
+    :: LB.ByteString -- ^ Frame payload.
+    -> MAC -- ^ Destination address.
+    -> InterfaceNum
+    -> PortNum
+    -> n
+    -> STM ()
 
--- | Data type representing a single-interface single-port node.
-data SimpleNode = SimpleNode
-  { interface :: {-# UNPACK #-} !NIC
-  , handleFrame :: Frame -> IO (Maybe Frame)
-  }
+  receive
+    :: InterfaceNum
+    -> n
+    -> IO InFrame
 
-newtype SimpleNodeOp a = SimpleNodeOp
-  { runSimpleNodeOp :: ReaderT SimpleNode IO a
-  } deriving (Functor, Applicative, Monad, MonadReader SimpleNode)
+-- | 'ReaderT' version of 'interfaces'.
+interfacesR :: (Monad m, Node n) => ReaderT n m (Vector NIC)
+interfacesR
+  = reader interfaces
 
-send
-  :: LB.ByteString -- ^ Frame payload.
-  -> MAC -- ^ Destination
-  -> SimpleNodeOp ()
-send payload destination = do
-  sn <- ask
-  SimpleNodeOp . lift . atomically $ sendOnNIC payload destination (interface sn) 0
+-- | 'ReaderT' version of 'send'.
+sendR
+  :: Node n
+  => LB.ByteString
+  -> MAC
+  -> InterfaceNum
+  -> PortNum
+  -> ReaderT n STM ()
+sendR payload dest i j
+  = ReaderT $ send payload dest i j 
 
-receive :: SimpleNodeOp Frame
-receive = do
-  sn <- ask
-  frame <- SimpleNodeOp . lift $ 
-    receiveOnNIC (interface sn) >>= handleFrame sn
-  maybe receive return frame
+-- | 'ReaderT' version of 'receive'.
+receiveR
+  :: Node n
+  => InterfaceNum
+  -> ReaderT n IO InFrame
+receiveR i
+  = ReaderT $ receive i
 
-setPromiscuous
-  :: Bool
-  -> SimpleNodeOp ()
-setPromiscuous b = do
-  nic <- fmap interface ask
-  SimpleNodeOp . lift . atomically $ writeTVar (promiscuous nic) b
-  
 ----------
 -- Main -- 
 ----------
