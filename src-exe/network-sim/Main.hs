@@ -1,3 +1,5 @@
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+
 module Main where
 
 import qualified Data.ByteString.Lazy as LB
@@ -10,8 +12,9 @@ import qualified Data.Vector as V
 import Control.Monad
 import Data.Maybe
 import Control.Concurrent.Async
+import Control.Monad.Reader
 
--- | 48-bit media access control (MAC) address.
+-- | 48-bit medium access control (MAC) address.
 type MAC = Int64
 
 type PortNum = Int 
@@ -99,13 +102,13 @@ disconnectPort nic n
             writeTVar (mate q) Nothing
             writeTVar (mate p) Nothing
 
-send
+sendOnNIC
   :: LB.ByteString -- ^ Payload.
   -> MAC -- ^ Destination.
   -> NIC
   -> PortNum
   -> STM ()
-send payload destination nic n 
+sendOnNIC payload destination nic n 
   = case ports nic V.!? n of
       Nothing -> 
         -- TODO: alert user to index out of bounds error?
@@ -123,10 +126,10 @@ send payload destination nic n
 
 -- | Wait on all ports of a NIC for the next incoming frame. This is a
 -- blocking method.
-receive
+receiveOnNIC
   :: NIC
   -> IO Frame
-receive nic = do
+receiveOnNIC nic = do
   -- __NOTE__: by reading the promiscuous setting before initiating
   -- the receieve, we cannot change this setting in-flight.
   promis <- readTVarIO (promiscuous nic)
@@ -147,6 +150,46 @@ receive nic = do
                   return frame
                 else
                   action
+
+------------------
+-- SimpleNodeOp --   
+------------------
+
+-- | Data type representing a single-interface single-port node.
+data SimpleNode = SimpleNode
+  { interface :: {-# UNPACK #-} !NIC
+  , handleFrame :: Frame -> IO (Maybe Frame)
+  }
+
+newtype SimpleNodeOp a = SimpleNodeOp
+  { runSimpleNodeOp :: ReaderT SimpleNode IO a
+  } deriving (Functor, Applicative, Monad, MonadReader SimpleNode)
+
+send
+  :: LB.ByteString -- ^ Frame payload.
+  -> MAC -- ^ Destination
+  -> SimpleNodeOp ()
+send payload destination = do
+  sn <- ask
+  SimpleNodeOp . lift . atomically $ sendOnNIC payload destination (interface sn) 0
+
+receive :: SimpleNodeOp Frame
+receive = do
+  sn <- ask
+  frame <- SimpleNodeOp . lift $ 
+    receiveOnNIC (interface sn) >>= handleFrame sn
+  maybe receive return frame
+
+setPromiscuous
+  :: Bool
+  -> SimpleNodeOp ()
+setPromiscuous b = do
+  nic <- fmap interface ask
+  SimpleNodeOp . lift . atomically $ writeTVar (promiscuous nic) b
+  
+----------
+-- Main -- 
+----------
 
 main
   = undefined
