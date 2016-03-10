@@ -45,6 +45,7 @@ newPort
 data NIC = NIC
   { mac :: {-# UNPACK #-} !MAC
   , ports :: {-# UNPACK #-} !(Vector Port)
+  , promiscuous :: !(TVar Bool)
   }
 
 -- | Connect two NICs, using the first free port available for each.
@@ -125,8 +126,27 @@ send payload destination nic n
 receive
   :: NIC
   -> IO Frame
-receive
-  = mapM (async . atomically . readTQueue . buffer) . V.toList . ports >=> fmap snd . waitAnyCancel
-    
+receive nic = do
+  -- __NOTE__: by reading the promiscuous setting before initiating
+  -- the receieve, we cannot change this setting in-flight.
+  promis <- readTVarIO (promiscuous nic)
+  asyncs <- mapM (async . atomically . portAction promis) . V.toList . ports $ nic
+  fmap snd . waitAnyCancel $ asyncs
+  where
+    portAction isPromiscuous p
+      = action
+      where
+        action = do 
+          frame <- readTQueue (buffer p)
+          if isPromiscuous
+            then
+              return frame
+            else
+              if mac nic == destination frame
+                then
+                  return frame
+                else
+                  action
+
 main
   = undefined
