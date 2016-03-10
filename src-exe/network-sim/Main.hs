@@ -16,16 +16,24 @@ type MAC = Int64
 type PortNum = Int 
 
 data LinkException
-  = PortAlreadyDisconnected MAC PortNum
+  = PortDisconnected MAC PortNum
   | PortAlreadyConnected MAC PortNum
   | NoFreePort MAC
   deriving (Show, Typeable)
 
-instance Exception LinkException           
+instance Exception LinkException
+
+-- | A simplified representation of an Ethernet frame, assuming a
+-- perfect physical layer.
+data Frame = Frame
+  { destination :: {-# UNPACK #-} !MAC 
+  , source :: {-# UNPACK #-} !MAC
+  , payload :: !LB.ByteString
+  } 
 
 data Port = Port
   { mate :: !(TVar (Maybe Port))
-  , buffer :: !(TQueue LB.ByteString)
+  , buffer :: !(TQueue Frame)
   }
 
 newPort :: STM Port
@@ -82,12 +90,34 @@ disconnectPort nic n
         mate' <- readTVar (mate p)
         case mate' of
           Nothing ->
-            throwM $ PortAlreadyDisconnected (mac nic) n
+            throwM $ PortDisconnected (mac nic) n
           Just q -> do
             -- __NOTE__: We do not check if the mate is already
             -- disconnected.
             writeTVar (mate q) Nothing
             writeTVar (mate p) Nothing
 
+send
+  :: LB.ByteString -- ^ Payload.
+  -> MAC -- ^ Destination.
+  -> NIC
+  -> PortNum
+  -> STM ()
+send payload destination nic n 
+  = case ports nic V.!? n of
+      Nothing -> 
+        -- TODO: alert user to index out of bounds error?
+        return ()
+      Just p -> do 
+        let
+          frame
+            = Frame destination (mac nic) payload
+        mate' <- readTVar (mate p)
+        case mate' of
+          Nothing ->
+            throwM $ PortDisconnected (mac nic) n
+          Just q ->
+            writeTQueue (buffer q) frame
+  
 main
   = undefined
