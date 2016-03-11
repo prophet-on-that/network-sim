@@ -1,7 +1,7 @@
 module NetworkSim.LinkLayer.SimpleNode
   ( -- * SimpleNode 
-    SimpleNode ()
-  , newSimpleNode 
+    SimpleNode (..)
+  , new
     -- * SimpleNode programs
   , Op
   ) where
@@ -17,10 +17,10 @@ data SimpleNode = SimpleNode
   { interface :: {-# UNPACK #-} !NIC
   }
 
-newSimpleNode
+new
   :: MAC
   -> STM SimpleNode
-newSimpleNode mac
+new mac
   = SimpleNode <$> newNIC
   where
     newNIC

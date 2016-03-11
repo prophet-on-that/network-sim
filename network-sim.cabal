@@ -38,7 +38,12 @@ Test-Suite test-link-layer
   ghc-options: -W
   build-depends:
       base 
+    , network-sim
     , HUnit == 1.2.*
+    , bytestring
+    , stm
+    , async
+    , mtl
 
 source-repository head
   type:     git
