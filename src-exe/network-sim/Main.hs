@@ -144,9 +144,8 @@ sendOnNIC payload destination nic n
 -- blocking method.
 receiveOnNIC
   :: NIC
-  -> (NIC -> Frame () -> IO (Maybe (Frame ()))) -- ^ Handler for broadcast frames.
   -> IO InFrame 
-receiveOnNIC nic handler = do
+receiveOnNIC nic = do
   -- __NOTE__: by reading the promiscuous setting before initiating
   -- the receieve, we cannot change this setting in-flight.
   promis <- readTVarIO (promiscuous nic)
@@ -156,13 +155,8 @@ receiveOnNIC nic handler = do
     dest
       = destination frame 
   if dest == broadcastAddr
-    then do
-      frame' <- handler nic $ frame { destination = () }
-      case frame' of
-        Nothing ->
-          receiveOnNIC nic handler
-        Just frame'' ->
-          return $ frame'' { destination = Broadcast }
+    then
+      return $ frame { destination = Broadcast }
     else
       return $ frame { destination = MAC dest }
   where
