@@ -61,7 +61,7 @@ printMAC mac
 
 broadcastAddr :: MAC
 broadcastAddr
-  = shift 2 48 - 1
+  = 0xffffffffffff
 
 type PortNum = Int
 type InterfaceNum = Int 
