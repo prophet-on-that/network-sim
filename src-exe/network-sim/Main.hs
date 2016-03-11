@@ -144,21 +144,26 @@ sendOnNIC payload destination nic n
 -- blocking method.
 receiveOnNIC
   :: NIC
-  -> IO InFrame 
+  -> IO (PortNum, InFrame)
 receiveOnNIC nic = do
   -- __NOTE__: by reading the promiscuous setting before initiating
   -- the receieve, we cannot change this setting in-flight.
   promis <- readTVarIO (promiscuous nic)
   asyncs <- mapM (async . atomically . portAction promis) . V.toList . ports $ nic
-  frame <- fmap snd . waitAnyCancel $ asyncs
+  let
+    indexedAsyncs
+      = zipWith (fmap . (,)) [0..] asyncs 
+  (portNum, frame) <- fmap snd . waitAnyCancel $ indexedAsyncs
   let
     dest
-      = destination frame 
-  if dest == broadcastAddr
-    then
-      return $ frame { destination = Broadcast }
-    else
-      return $ frame { destination = MAC dest }
+      = destination frame
+    frame'
+      = if dest == broadcastAddr
+          then
+            frame { destination = Broadcast }
+          else
+            frame { destination = MAC dest }
+  return (portNum, frame')
   where
     portAction isPromiscuous p
       = action
@@ -191,7 +196,7 @@ class Node n where
   receive
     :: InterfaceNum
     -> n
-    -> IO InFrame
+    -> IO (PortNum, InFrame)
 
 -- | 'ReaderT' version of 'interfaces'.
 interfacesR :: (Monad m, Node n) => ReaderT n m (Vector NIC)
@@ -213,7 +218,7 @@ sendR payload dest i j
 receiveR
   :: Node n
   => InterfaceNum
-  -> ReaderT n IO InFrame
+  -> ReaderT n IO (PortNum, InFrame)
 receiveR i
   = ReaderT $ receive i
 
