@@ -4,9 +4,12 @@ module NetworkSim.LinkLayer
   ( -- * MAC
     MAC
   , printMAC 
+  , freshMAC
   , broadcastAddr
-  , LinkException (..)
   , Destination (..)
+    -- * Link-layer exception
+  , LinkException (..)
+    -- * Ethernet Frame
   , Frame (..)
   , InFrame
   , OutFrame
@@ -39,6 +42,7 @@ import Control.Concurrent.Async
 import Data.Bits 
 import Control.Monad.Reader
 import Data.List (intercalate)
+import Data.Unique
 
 -- | 48-bit medium access control (MAC) address.
 type MAC = Int64
@@ -58,6 +62,10 @@ printMAC mac
       = 0xffff
     sep
       = ":"
+
+freshMAC :: IO MAC
+freshMAC
+  = (0xffffffffffff .&.) . fromIntegral . hashUnique <$> newUnique
 
 broadcastAddr :: MAC
 broadcastAddr
