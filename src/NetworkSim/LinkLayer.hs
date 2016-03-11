@@ -1,7 +1,9 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module NetworkSim.LinkLayer
-  ( MAC
+  ( -- * MAC
+    MAC
+  , printMAC 
   , broadcastAddr
   , LinkException (..)
   , Destination (..)
@@ -34,11 +36,28 @@ import qualified Data.Vector as V
 import Control.Monad
 import Data.Maybe
 import Control.Concurrent.Async
-import Data.Bits (shift)
+import Data.Bits 
 import Control.Monad.Reader
+import Data.List (intercalate)
 
 -- | 48-bit medium access control (MAC) address.
 type MAC = Int64
+
+printMAC :: MAC -> String
+printMAC mac
+  = intercalate sep . map show $
+      [ shiftR mac 40 .&. mask
+      , shiftR mac 32 .&. mask
+      , shiftR mac 24 .&. mask
+      , shiftR mac 16 .&. mask
+      , shiftR mac 16 .&. mask
+      , mac .&. mask
+      ]
+  where
+    mask
+      = 0xffff
+    sep
+      = ":"
 
 broadcastAddr :: MAC
 broadcastAddr
