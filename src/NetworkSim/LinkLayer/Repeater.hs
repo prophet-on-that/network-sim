@@ -1,14 +1,18 @@
 module NetworkSim.LinkLayer.Repeater
-  ( Repeater ()
-  , newRepeater 
+  ( -- * Repeater
+    Repeater ()
+  , newRepeater
+    -- * Repeater programs
+  , Op
+  , repeater
   ) where
 
 import NetworkSim.LinkLayer
 
 import Control.Concurrent.STM
 import qualified Data.Vector as V
-import Control.Monad
 import Control.Concurrent.Async
+import Control.Monad.Reader
 
 -- | A single-interface repeater, indiscriminately copying a request
 -- on a port to every other port.
@@ -59,3 +63,12 @@ instance Node Repeater where
         where
           indices
             = filter (/= portNum) [0 .. V.length (ports nic) - 1]
+
+type Op = ReaderT Repeater IO
+
+-- | A program to run atop a 'Repeater' which will discard any
+-- messages to the repeater, implicitly forwarding any frame recieved
+-- on a port to every other port.
+repeater :: Op ()
+repeater
+  = forever $ void (receiveR 0)
