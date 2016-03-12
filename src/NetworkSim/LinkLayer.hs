@@ -2,10 +2,7 @@
 
 module NetworkSim.LinkLayer
   ( -- * MAC
-    MAC
-  , printMAC 
-  , freshMAC
-  , broadcastAddr
+    module NetworkSim.LinkLayer.MAC
   , Destination (..)
     -- * Link-layer exception
   , LinkException (..)
@@ -29,47 +26,18 @@ module NetworkSim.LinkLayer
   , receiveR
   ) where
 
+import NetworkSim.LinkLayer.MAC
+
 import qualified Data.ByteString.Lazy as LB
 import Control.Concurrent.STM
 import Data.Typeable
 import Control.Monad.Catch
-import Data.Int
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Control.Monad
 import Data.Maybe
 import Control.Concurrent.Async
-import Data.Bits 
 import Control.Monad.Reader
-import Data.List (intercalate)
-import Data.Unique
-
--- | 48-bit medium access control (MAC) address.
-type MAC = Int64
-
-printMAC :: MAC -> String
-printMAC mac
-  = intercalate sep . map show $
-      [ shiftR mac 40 .&. mask
-      , shiftR mac 32 .&. mask
-      , shiftR mac 24 .&. mask
-      , shiftR mac 16 .&. mask
-      , shiftR mac 16 .&. mask
-      , mac .&. mask
-      ]
-  where
-    mask
-      = 0xffff
-    sep
-      = ":"
-
-freshMAC :: IO MAC
-freshMAC
-  = (0xffffffffffff .&.) . fromIntegral . hashUnique <$> newUnique
-
-broadcastAddr :: MAC
-broadcastAddr
-  = 0xffffffffffff
 
 type PortNum = Int
 type InterfaceNum = Int 
