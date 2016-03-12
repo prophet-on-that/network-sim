@@ -46,6 +46,7 @@ data LinkException
   = PortDisconnected MAC PortNum
   | PortAlreadyConnected MAC PortNum
   | NoFreePort MAC
+  | ConnectToSelf MAC 
   deriving (Show, Typeable)
 
 instance Exception LinkException
@@ -94,12 +95,16 @@ connectNICs
   -> NIC
   -> STM ()
 connectNICs nic nic' = do
-  (portNum, p) <- firstFreePort nic
-  (portNum', p') <- firstFreePort nic'
-  checkDisconnected nic portNum p
-  checkDisconnected nic' portNum' p'
-  writeTVar (mate p) (Just p')
-  writeTVar (mate p') (Just p)
+  if nic == nic'
+    then
+      throwM $ ConnectToSelf (mac nic)
+    else do 
+      (portNum, p) <- firstFreePort nic
+      (portNum', p') <- firstFreePort nic'
+      checkDisconnected nic portNum p
+      checkDisconnected nic' portNum' p'
+      writeTVar (mate p) (Just p')
+      writeTVar (mate p') (Just p)
   where
     firstFreePort nic = do
       free <- V.filterM hasFreePort . V.indexed $ ports nic

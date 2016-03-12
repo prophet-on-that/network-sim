@@ -45,6 +45,7 @@ Test-Suite test-link-layer
     , stm
     , async
     , mtl
+    , exceptions
 
 source-repository head
   type:     git

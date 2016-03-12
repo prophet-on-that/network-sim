@@ -10,11 +10,13 @@ import qualified Data.ByteString.Lazy as LB
 import Control.Monad.STM
 import Control.Monad.Reader
 import Control.Concurrent.Async
+import Control.Monad.Catch
 
 main
   = runTestTT $ TestList
-      [ TestLabel "connectNICs" connectNICsT
-      , TestLabel "send" sendT
+      [ TestLabel "Connect NICs" connectNICsT
+      , TestLabel "Connect same NIC" connectSameNICT
+      , TestLabel "Send" sendT
       ]
 
 connectNICsT :: Test
@@ -22,6 +24,20 @@ connectNICsT = TestCase $ do
   node0 <- freshMAC >>= atomically . SimpleNode.new
   node1 <- freshMAC >>= atomically . SimpleNode.new
   atomically $ connectNICs (SimpleNode.interface node0) (SimpleNode.interface node1)
+
+connectSameNICT :: Test
+connectSameNICT = TestCase $ do
+  node0 <- freshMAC >>= atomically . SimpleNode.new
+  let
+    interface0
+      = SimpleNode.interface node0
+    handler (ConnectToSelf _)
+      = return ()
+    handler e
+      = throwM e
+  handle handler $ do 
+    atomically $ connectNICs interface0 interface0
+    assertFailure "No exception thrown"
 
 sendT :: Test
 sendT = TestCase $ do
