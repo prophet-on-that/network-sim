@@ -208,7 +208,7 @@ starNetwork n p q = do
       let
         otherMACs
           = V.ifilter (\j _ -> j /= i) macs
-      runReaderT (p repeaterMAC otherMACs (i `mod` n)) node
+      runReaderT (p repeaterMAC otherMACs (i `mod` (n - 1))) node
 
     repeaterProgram
       = runReaderT (q macs) repeater
