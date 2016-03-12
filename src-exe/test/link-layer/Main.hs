@@ -7,7 +7,6 @@ import qualified NetworkSim.LinkLayer.SimpleNode as SimpleNode
 
 import Test.Tasty
 import Test.Tasty.HUnit
-import qualified Data.ByteString.Lazy as LB
 import Control.Concurrent.STM
 import Control.Monad.Reader
 import Control.Concurrent.Async
@@ -142,22 +141,51 @@ disconnectT
       assertEqual "Transmitted payload does not equal message" message payload
 
 sendT :: TestTree
-sendT = testCase "send" $ do
-  mac1 <- freshMAC
-  node0 <- freshMAC >>= atomically . SimpleNode.new
-  node1 <- atomically $ SimpleNode.new mac1
-  atomically $ connectNICs (SimpleNode.interface node0) (SimpleNode.interface node1)
-  let
-    message
-      = "Hello, world!"
-        
-    program0 :: SimpleNode.Op ()
-    program0
-      = mapReaderT atomically $ sendR message mac1 0 0
+sendT
+  = testGroup "send"
+      [ testCase "Send" simpleSendT
+      , testCase "Send and receive" sendAndReceiveT
+      ]
+  where
+    simpleSendT = do
+      mac1 <- freshMAC
+      node0 <- freshMAC >>= atomically . SimpleNode.new
+      node1 <- atomically $ SimpleNode.new mac1
+      atomically $ connectNICs (SimpleNode.interface node0) (SimpleNode.interface node1)
+      let
+        message
+          = "Hello, world!"
 
-    program1 :: SimpleNode.Op LB.ByteString
-    program1
-      = payload . snd <$> receiveR 0
-        
-  (_, payload) <- concurrently (runReaderT program0 node0) (runReaderT program1 node1)
-  assertEqual "Transmitted payload does not equal message" message payload
+        program0
+          = mapReaderT atomically $ sendR message mac1 0 0
+
+        program1
+          = payload . snd <$> receiveR 0
+
+      (_, payload) <- concurrently (runReaderT program0 node0) (runReaderT program1 node1)
+      assertEqual "Transmitted payload does not equal message" message payload
+      
+    sendAndReceiveT = do 
+      [mac0, mac1] <- replicateM 2 freshMAC
+      node0 <- atomically $ SimpleNode.new mac0
+      node1 <- atomically $ SimpleNode.new mac1
+      atomically $ connectNICs (SimpleNode.interface node0) (SimpleNode.interface node1)
+      let
+        msg0
+          = "Hello, world!"
+
+        msg1
+          = "Hello, too!"
+            
+        program0 = do 
+          mapReaderT atomically $ sendR msg0 mac1 0 0
+          payload . snd <$> receiveR 0
+
+        program1 = do
+          msg <- payload . snd <$> receiveR 0
+          mapReaderT atomically $ sendR msg1 mac0 0 0
+          return msg
+            
+      (payload0, payload1) <- concurrently (runReaderT program0 node0) (runReaderT program1 node1)
+      assertEqual "Payload 0 does not equal message" msg1 payload0
+      assertEqual "Payload 1 does not equal message" msg0 payload1

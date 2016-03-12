@@ -40,7 +40,6 @@ Test-Suite test-link-layer
   build-depends:
       base 
     , network-sim
-    , bytestring
     , stm
     , async
     , mtl
