@@ -4,6 +4,7 @@ module Main where
 
 import NetworkSim.LinkLayer
 import qualified NetworkSim.LinkLayer.SimpleNode as SimpleNode
+import qualified NetworkSim.LinkLayer.Repeater as Repeater
 
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -11,6 +12,7 @@ import Control.Concurrent.STM
 import Control.Monad.Reader
 import Control.Concurrent.Async
 import Control.Monad.Catch
+import Data.Vector (Vector)
 import qualified Data.Vector as V
 
 main
@@ -189,3 +191,26 @@ sendT
       (payload0, payload1) <- concurrently (runReaderT program0 node0) (runReaderT program1 node1)
       assertEqual "Payload 0 does not equal message" msg1 payload0
       assertEqual "Payload 1 does not equal message" msg0 payload1
+
+starNetwork
+  :: Int -- ^ Number of 'SimpleNode's connected to central repeater. Pre: >= 2.
+  -> (MAC -> Vector MAC -> Int -> SimpleNode.Op a) -- ^ Program to run on each 'SimpleNode'. Params: repeater_addr other_node_addrs next_node_index 
+  -> (Vector MAC -> Repeater.Op b) -- ^ Program to run on the repeater.
+  -> IO (b, Vector a)
+starNetwork n p q = do
+  macs <- V.replicateM n freshMAC
+  nodes <- atomically $ mapM SimpleNode.new macs
+  repeaterMAC <- freshMAC
+  repeater <- atomically $ Repeater.new n repeaterMAC
+  atomically $ mapM (connectNICs (Repeater.interface repeater) . SimpleNode.interface) nodes
+  let
+    nodeProgram i node = do
+      let
+        otherMACs
+          = V.ifilter (\j _ -> j /= i) macs
+      runReaderT (p repeaterMAC otherMACs (i `mod` n)) node
+
+    repeaterProgram
+      = runReaderT (q macs) repeater
+  concurrently repeaterProgram (mapConcurrently id $ V.imap nodeProgram nodes)
+  

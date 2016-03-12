@@ -3,8 +3,8 @@
 
 module NetworkSim.LinkLayer.Repeater
   ( -- * Repeater
-    Repeater ()
-  , newRepeater
+    Repeater (..)
+  , new
     -- * Repeater programs
   , Op
   , repeater
@@ -23,11 +23,11 @@ data Repeater = Repeater
   { interface :: {-# UNPACK #-} !NIC
   }
 
-newRepeater
+new
   :: Int -- ^ Number of ports. Pre: positive.
   -> MAC
   -> STM Repeater
-newRepeater n mac
+new n mac
   = Repeater <$> newNIC
   where
     newNIC
