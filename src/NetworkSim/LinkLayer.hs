@@ -84,6 +84,10 @@ data NIC = NIC
   , promiscuous :: !(TVar Bool)
   }
 
+instance Eq NIC where
+  nic == nic'
+    = mac nic == mac nic'
+
 -- | Connect two NICs, using the first free port available for each.
 connectNICs
   :: NIC
