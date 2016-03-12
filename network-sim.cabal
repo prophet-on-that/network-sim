@@ -40,13 +40,14 @@ Test-Suite test-link-layer
   build-depends:
       base 
     , network-sim
-    , HUnit == 1.2.*
     , bytestring
     , stm
     , async
     , mtl
     , exceptions
     , vector
+    , tasty == 0.10.*
+    , tasty-hunit == 0.9.*
 
 source-repository head
   type:     git

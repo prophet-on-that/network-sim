@@ -5,7 +5,8 @@ module Main where
 import NetworkSim.LinkLayer
 import qualified NetworkSim.LinkLayer.SimpleNode as SimpleNode
 
-import Test.HUnit
+import Test.Tasty
+import Test.Tasty.HUnit
 import qualified Data.ByteString.Lazy as LB
 import Control.Concurrent.STM
 import Control.Monad.Reader
@@ -14,25 +15,25 @@ import Control.Monad.Catch
 import qualified Data.Vector as V
 
 main
-  = runTestTT $ TestList
-      [ TestLabel "Connect" connectT
-      , TestLabel "Disconnect" disconnectT
-      , TestLabel "Send" sendT
+  = defaultMain $ testGroup "Link-layer tests" 
+      [ connectT
+      , disconnectT
+      , sendT
       ]
 
-connectT :: Test
+connectT :: TestTree
 connectT
-  = TestList
-      [ TestLabel "Connect NICs" connectNICsT
-      , TestLabel "Connect same NIC" connectSameT
+  = testGroup "connectNICs"
+      [ testCase "Connect NICs" connectNICsT
+      , testCase "Connect same NIC" connectSameT
       ]
   where
-    connectNICsT = TestCase $ do
+    connectNICsT = do
       node0 <- freshMAC >>= atomically . SimpleNode.new
       node1 <- freshMAC >>= atomically . SimpleNode.new
       atomically $ connectNICs (SimpleNode.interface node0) (SimpleNode.interface node1)
     
-    connectSameT = TestCase $ do
+    connectSameT = do
       node0 <- freshMAC >>= atomically . SimpleNode.new
       let
         interface0
@@ -45,16 +46,16 @@ connectT
         atomically $ connectNICs interface0 interface0
         assertFailure "No exception thrown"
 
-disconnectT :: Test
+disconnectT :: TestTree
 disconnectT
-  = TestList
-      [ TestLabel "Disconnect when disconnected" disconnectDisconnectedT
-      , TestLabel "No send post disconnect" noSendT
-      , TestLabel "No send by mate post disconnect" noSendT'
-      , TestLabel "Buffer available post disconnect" bufferAvailableT
+  = testGroup "disconnect"
+      [ testCase "Disconnect when disconnected" disconnectDisconnectedT
+      , testCase "No send post disconnect" noSendT
+      , testCase "No send by mate post disconnect" noSendT'
+      , testCase "Buffer available post disconnect" bufferAvailableT
       ]
   where
-    disconnectDisconnectedT = TestCase $ do
+    disconnectDisconnectedT = do
       node0 <- freshMAC >>= atomically . SimpleNode.new
       let
         handler (PortDisconnected _ 0)
@@ -66,7 +67,7 @@ disconnectT
         assertFailure "No exception thrown"
       
     -- | Check disconnecting port can now no longer send.
-    noSendT = TestCase $ do
+    noSendT = do
       [mac0, mac1] <- replicateM 2 freshMAC
       node0 <- atomically $ SimpleNode.new mac0
       node1 <- atomically $ SimpleNode.new mac1
@@ -90,7 +91,7 @@ disconnectT
       void $ concurrently (runReaderT p0 node0) (runReaderT p1 node1)
 
     -- | Check mate of disconnected port can now no longer send.
-    noSendT' = TestCase $ do 
+    noSendT' = do 
       [mac0, mac1] <- replicateM 2 freshMAC
       node0 <- atomically $ SimpleNode.new mac0
       node1 <- atomically $ SimpleNode.new mac1
@@ -116,7 +117,7 @@ disconnectT
       void $ concurrently (runReaderT p0 node0) (runReaderT p1 node1)
 
     -- | Check buffer contents still available post disconnect
-    bufferAvailableT = TestCase $ do 
+    bufferAvailableT = do 
       [mac0, mac1] <- replicateM 2 freshMAC
       node0 <- atomically $ SimpleNode.new mac0
       node1 <- atomically $ SimpleNode.new mac1
@@ -140,8 +141,8 @@ disconnectT
       (payload, _) <- concurrently (runReaderT p0 node0) (runReaderT p1 node1)
       assertEqual "Transmitted payload does not equal message" message payload
 
-sendT :: Test
-sendT = TestCase $ do
+sendT :: TestTree
+sendT = testCase "Send" $ do
   mac1 <- freshMAC
   node0 <- freshMAC >>= atomically . SimpleNode.new
   node1 <- atomically $ SimpleNode.new mac1
