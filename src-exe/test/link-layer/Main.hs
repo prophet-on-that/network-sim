@@ -15,7 +15,7 @@ import Control.Monad.Catch
 import qualified Data.Vector as V
 
 main
-  = defaultMain $ testGroup "Link-layer tests" 
+  = defaultMain $ testGroup "Link-layer Tests" 
       [ connectT
       , disconnectT
       , sendT
@@ -48,11 +48,11 @@ connectT
 
 disconnectT :: TestTree
 disconnectT
-  = testGroup "disconnect"
-      [ testCase "Disconnect when disconnected" disconnectDisconnectedT
-      , testCase "No send post disconnect" noSendT
-      , testCase "No send by mate post disconnect" noSendT'
-      , testCase "Buffer available post disconnect" bufferAvailableT
+  = testGroup "disconnectPort"
+      [ testCase "Disconnecting impossible when already disconnected" disconnectDisconnectedT
+      , testCase "Sending impossible after disconnection" noSendT
+      , testCase "Mate registers disconnection" noSendT'
+      , testCase "Buffer still available after disconnection" bufferAvailableT
       ]
   where
     disconnectDisconnectedT = do
@@ -142,7 +142,7 @@ disconnectT
       assertEqual "Transmitted payload does not equal message" message payload
 
 sendT :: TestTree
-sendT = testCase "Send" $ do
+sendT = testCase "send" $ do
   mac1 <- freshMAC
   node0 <- freshMAC >>= atomically . SimpleNode.new
   node1 <- atomically $ SimpleNode.new mac1
