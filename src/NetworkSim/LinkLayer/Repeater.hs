@@ -1,3 +1,6 @@
+-- | The 'Repeater' type is actually a link-layer switch, with zero
+-- intelligence employed when forwarding packets.
+
 module NetworkSim.LinkLayer.Repeater
   ( -- * Repeater
     Repeater ()
@@ -14,7 +17,7 @@ import qualified Data.Vector as V
 import Control.Concurrent.Async
 import Control.Monad.Reader
 
--- | A single-interface repeater, indiscriminately copying a request
+-- | A single-interface switch, indiscriminately copying a request
 -- on a port to every other port.
 data Repeater = Repeater
   { interface :: {-# UNPACK #-} !NIC
