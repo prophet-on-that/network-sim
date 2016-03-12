@@ -101,13 +101,16 @@ connectNICs nic nic' = do
   writeTVar (mate p) (Just p')
   writeTVar (mate p') (Just p)
   where
-    firstFreePort nic = do 
-      free <- fmap (msum . zipWith (fmap . (,)) [0..] . V.toList) . mapM (readTVar . mate) $ ports nic
-      case free of
-        Nothing ->
+    firstFreePort nic = do
+      free <- V.filterM hasFreePort . V.indexed $ ports nic
+      if V.length free > 0
+        then
+          return $ V.head free
+        else
           throwM $ NoFreePort (mac nic)
-        Just port ->
-          return port
+      where
+        hasFreePort (_, port) 
+          = isNothing <$> readTVar (mate port)
 
     checkDisconnected
       :: NIC
