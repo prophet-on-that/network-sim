@@ -194,7 +194,7 @@ sendT
 
 starNetwork
   :: Int -- ^ Number of 'SimpleNode's connected to central repeater. Pre: >= 2.
-  -> (MAC -> Vector MAC -> Int -> SimpleNode.Op a) -- ^ Program to run on each 'SimpleNode'. Params: repeater_addr other_node_addrs next_node_index 
+  -> (MAC -> Int -> Vector MAC -> SimpleNode.Op a) -- ^ Program to run on each 'SimpleNode'. Params: repeater_addr node_number other_addrs. other_addrs is rotated such that first addr is next in sequence.
   -> (Vector MAC -> Repeater.Op b) -- ^ Program to run on the repeater.
   -> IO (b, Vector a)
 starNetwork n p q = do
@@ -206,9 +206,11 @@ starNetwork n p q = do
   let
     nodeProgram i node = do
       let
+        (before, after)
+          = V.splitAt i macs
         otherMACs
-          = V.ifilter (\j _ -> j /= i) macs
-      runReaderT (p repeaterMAC otherMACs (i `mod` (n - 1))) node
+          = V.drop 1 after V.++ before
+      runReaderT (p repeaterMAC i otherMACs) node
 
     repeaterProgram
       = runReaderT (q macs) repeater
