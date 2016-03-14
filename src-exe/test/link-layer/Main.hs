@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module Main where
 
@@ -14,12 +15,14 @@ import Control.Concurrent.Async
 import Control.Monad.Catch
 import Data.Vector (Vector)
 import qualified Data.Vector as V
+import Data.String (fromString)
 
 main
   = defaultMain $ testGroup "Link-layer Tests" 
       [ connectT
       , disconnectT
       , sendT
+      , repeaterT
       ]
 
 connectT :: TestTree
@@ -195,9 +198,8 @@ sendT
 starNetwork
   :: Int -- ^ Number of 'SimpleNode's connected to central repeater. Pre: >= 2.
   -> (MAC -> Int -> Vector MAC -> SimpleNode.Op a) -- ^ Program to run on each 'SimpleNode'. Params: repeater_addr node_number other_addrs. other_addrs is rotated such that first addr is next in sequence.
-  -> (Vector MAC -> Repeater.Op b) -- ^ Program to run on the repeater.
-  -> IO (b, Vector a)
-starNetwork n p q = do
+  -> IO (Vector a)
+starNetwork n p = do
   macs <- V.replicateM n freshMAC
   nodes <- atomically $ mapM SimpleNode.new macs
   repeaterMAC <- freshMAC
@@ -213,6 +215,38 @@ starNetwork n p q = do
       runReaderT (p repeaterMAC i otherMACs) node
 
     repeaterProgram
-      = runReaderT (q macs) repeater
-  concurrently repeaterProgram (mapConcurrently id $ V.imap nodeProgram nodes)
+      = runReaderT Repeater.repeater repeater
+  withAsync repeaterProgram $ \_ -> 
+    mapConcurrently id $ V.imap nodeProgram nodes
   
+repeaterT :: TestTree
+repeaterT
+  = testGroup "repeater"
+      [ testCase "Replicate" replicateT
+      , testCase "Replicate many" replicateManyT
+      ]
+  where
+    replicateT = do
+      let
+        msg0
+          = "Hello, world!"
+            
+        p _ 0 (V.head -> mac) 
+          = mapReaderT atomically $ sendR msg0 mac 0 0
+        p _ _ _ = do 
+          msg <- payload . snd <$> receiveR 0
+          lift $ assertEqual "Transmitted payload does not equal message" msg msg0
+      void $ starNetwork 2 p
+
+    replicateManyT = do
+      let
+        n
+          = 5
+        p _ i (V.head -> mac) = do
+          let
+            msg
+              = fromString . show $ i
+          mapReaderT atomically $ sendR msg mac 0 0
+          payload . snd <$> receiveR 0
+      ret <- starNetwork n p
+      assertEqual "Received payloads do not equal transmitted messages" ret (fmap (fromString . show) . V.fromList $ n - 1 : [0 .. n - 2])
