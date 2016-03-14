@@ -1,16 +1,18 @@
+{-# LANGUAGE ViewPatterns #-}
+
 module NetworkSim.LinkLayer.SimpleNode
-  ( -- * SimpleNode 
-    SimpleNode (..)
+  ( SimpleNode ()
   , new
-    -- * SimpleNode programs
   , Op
+  , send
+  , receive
   ) where
 
 import NetworkSim.LinkLayer
 
-import Control.Concurrent.STM
-import qualified Data.Vector as V
 import Control.Monad.Reader
+import Control.Monad.Logger
+import Control.Monad.Trans.Control
 
 -- | A single-interface, single-report network node.
 data SimpleNode = SimpleNode
@@ -18,26 +20,27 @@ data SimpleNode = SimpleNode
   }
 
 new
-  :: MAC
-  -> STM SimpleNode
-new mac
-  = SimpleNode <$> newNIC
-  where
-    newNIC
-      = NIC mac <$> fmap V.singleton newPort <*> newTVar False
+  :: IO SimpleNode
+new
+  = SimpleNode <$> newNIC 1 False
 
-instance Node SimpleNode where
-  interfaces
-    = V.singleton . interface
+type Op = ReaderT SimpleNode
 
-  -- __Note__: we do not detect if the user requests an interface or
-  -- port number other that 0.
-  send payload destination _ _ simpleNode
-    = sendOnNIC payload destination (interface simpleNode) 0
-
-  -- __Note__: we do not detect if the user requests an interface
-  -- number other that 0.
-  receive _ simpleNode
-    = receiveOnNIC (interface simpleNode)
-
-type Op = ReaderT SimpleNode IO
+send
+  :: (MonadIO m, MonadLogger m)
+  => Payload
+  -> MAC -- ^ Destination address.
+  -> Op m ()
+send payload dest
+  = ReaderT $ \(interface -> nic) -> do 
+      let
+        frame
+          = Frame dest (getMAC nic) payload
+      sendOnNIC frame nic 0
+  
+receive
+  :: (MonadIO m, MonadBaseControl IO m, MonadLogger m)
+  => Op m InFrame
+receive
+  = ReaderT $ \node ->
+      snd <$> receiveOnNIC (interface node)

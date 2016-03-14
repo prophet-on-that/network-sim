@@ -1,21 +1,26 @@
 -- | The 'Repeater' type is actually a link-layer switch, with zero
 -- intelligence employed when forwarding packets.
 
+{-# LANGUAGE ViewPatterns #-}
+
 module NetworkSim.LinkLayer.Repeater
   ( -- * Repeater
     Repeater (..)
   , new
     -- * Repeater programs
   , Op
+  , receive
   , repeater
   ) where
 
 import NetworkSim.LinkLayer
 
-import Control.Concurrent.STM
-import qualified Data.Vector as V
-import Control.Concurrent.Async
+import Control.Concurrent.Async.Lifted
 import Control.Monad.Reader
+import Control.Monad.Logger
+import Control.Monad.Trans.Control
+import Data.Monoid
+import qualified Data.Text as T
 
 -- | A single-interface switch, indiscriminately copying a request
 -- on a port to every other port.
@@ -25,53 +30,49 @@ data Repeater = Repeater
 
 new
   :: Int -- ^ Number of ports. Pre: positive.
-  -> MAC
-  -> STM Repeater
-new n mac
-  = Repeater <$> newNIC
-  where
-    newNIC
-      = NIC mac <$> V.replicateM n newPort <*> newTVar True
+  -> IO Repeater
+new n
+  = Repeater <$> newNIC n True
 
-instance Node Repeater where
-  interfaces
-    = V.singleton . interface
+type Op = ReaderT Repeater    
 
-  -- __Note__: we do not detect if the user requests an interface
-  -- number other that 0.
-  send payload destination _ n repeater
-    = sendOnNIC payload destination (interface repeater) n
-
-  -- __Note__: we do not detect if the user requests an interface
-  -- number other that 0.
-  receive _ repeater = do
-    (portNum, frame) <- receiveOnNIC nic
-    case destination frame of
-      Broadcast -> do 
-        forward portNum (payload frame) broadcastAddr 
-        receive 0 repeater 
-      MAC dest ->
-        if dest == mac nic
-          then
-            return (portNum, frame)
-          else do
-            forward portNum (payload frame) dest
-            receive 0 repeater
-    where
-      nic
-        = interface repeater
-          
-      forward portNum payload destAddr 
-        = void $ mapConcurrently (\i -> atomically $ send payload destAddr 0 i repeater) indices
-        where
-          indices
-            = filter (/= portNum) [0 .. V.length (ports nic) - 1]
-
-type Op = ReaderT Repeater IO
-
+receive
+  :: (MonadIO m, MonadBaseControl IO m, MonadLogger m)
+  => Op m (PortNum, InFrame)
+receive
+  = ReaderT $ \(interface -> nic) -> do
+      let
+        action = do 
+          (portNum, frame) <- receiveOnNIC nic
+          let
+            dest
+              = case destination frame of
+                  Broadcast ->
+                    broadcastAddr
+                  MAC a ->
+                    a
+          if dest == getMAC nic
+            then
+              return (portNum, frame)
+            else do
+              let
+                indices
+                  = filter (/= portNum) [0 .. portCount nic - 1]
+                outFrame
+                  = frame { destination = dest }
+                forward i = do
+                  sendOnNIC outFrame nic i
+                  logDebugP (getMAC nic) i . T.pack $ "Forwarding frame from " <> show dest <> " to " <> (show . source) frame
+                  
+              void $ mapConcurrently forward indices
+              action
+      action  
+                      
 -- | A program to run atop a 'Repeater' which will discard any
 -- messages to the repeater, implicitly forwarding any frame recieved
 -- on a port to every other port.
-repeater :: Op ()
 repeater
-  = forever $ void (receiveR 0)
+  :: (MonadIO m, MonadBaseControl IO m, MonadLogger m)
+  => Op m ()
+repeater
+  = forever $ void receive

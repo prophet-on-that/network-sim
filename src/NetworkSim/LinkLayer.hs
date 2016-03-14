@@ -1,46 +1,57 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE MultiWayIf #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 module NetworkSim.LinkLayer
   ( -- * MAC
     module NetworkSim.LinkLayer.MAC
-  , Destination (..)
     -- * Link-layer exception
   , LinkException (..)
     -- * Ethernet Frame
   , Frame (..)
-  , InFrame
+  , Payload ()
   , OutFrame
+  , Destination (..)
+  , InFrame
     -- * Hardware Port 
-  , Port (..)
+  , PortNum
+  , Port ()
   , newPort
     -- * Network Interface Controller (NIC)
-  , NIC (..)
+  , NIC ()
+  , newNIC
+  , getMAC
+  , portCount
   , connectNICs
   , disconnectPort
   , sendOnNIC
   , receiveOnNIC
-    -- * Link-layer Node functionality
-  , Node (..)
-  , interfacesR
-  , sendR
-  , receiveR
+  , setPromiscuity
+    -- * Logging Utilities
+  , logInfo'
+  , logDebugP
+  , logInfoP
   ) where
 
 import NetworkSim.LinkLayer.MAC
 
 import qualified Data.ByteString.Lazy as LB
-import Control.Concurrent.STM
+import Control.Concurrent.STM.Lifted
 import Data.Typeable
 import Control.Monad.Catch
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Control.Monad
 import Data.Maybe
-import Control.Concurrent.Async
-import Control.Monad.Reader
+import Control.Concurrent.Async.Lifted
+import Control.Monad.Logger
+import qualified Data.Text as T
+import Data.Monoid
+import Control.Monad.IO.Class
+import Control.Monad.Trans.Control
 
 type PortNum = Int
-type InterfaceNum = Int 
 
 data LinkException
   = PortDisconnected MAC PortNum
@@ -51,12 +62,14 @@ data LinkException
 
 instance Exception LinkException
 
+type Payload = LB.ByteString
+
 -- | A simplified representation of an Ethernet frame, assuming a
 -- perfect physical layer.
 data Frame a = Frame
   { destination :: !a 
   , source :: {-# UNPACK #-} !MAC 
-  , payload :: !LB.ByteString
+  , payload :: !Payload
   }
 
 -- | An outbound Ethernet frame.
@@ -82,29 +95,40 @@ newPort
 data NIC = NIC
   { mac :: {-# UNPACK #-} !MAC
   , ports :: {-# UNPACK #-} !(Vector Port)
-  , promiscuous :: !(TVar Bool)
+  , promiscuity :: !(TVar Bool)
   }
 
 instance Eq NIC where
   nic == nic'
     = mac nic == mac nic'
 
+newNIC
+  :: Int -- ^ Number of ports. Pre: >= 1.
+  -> Bool -- ^ Initial promiscuity setting.
+  -> IO NIC
+newNIC n promis = do
+  mac <- freshMAC
+  atomically $ NIC mac <$> V.replicateM n newPort <*> newTVar promis
+
 -- | Connect two NICs, using the first free port available for each.
 connectNICs
-  :: NIC
+  :: (MonadIO m, MonadThrow m, MonadLogger m)
+  => NIC
   -> NIC
-  -> STM ()
+  -> m ()
 connectNICs nic nic' = do
   if nic == nic'
     then
       throwM $ ConnectToSelf (mac nic)
-    else do 
-      (portNum, p) <- firstFreePort nic
-      (portNum', p') <- firstFreePort nic'
-      checkDisconnected nic portNum p
-      checkDisconnected nic' portNum' p'
-      writeTVar (mate p) (Just p')
-      writeTVar (mate p') (Just p)
+    else do
+      atomically $ do 
+        (portNum, p) <- firstFreePort nic
+        (portNum', p') <- firstFreePort nic'
+        checkDisconnected nic portNum p
+        checkDisconnected nic' portNum' p'
+        writeTVar (mate p) (Just p')
+        writeTVar (mate p') (Just p)
+      logInfoN . T.pack $ "Connected " <> show (mac nic) <> " and " <> show (mac nic')
   where
     firstFreePort nic = do
       free <- V.filterM hasFreePort . V.indexed $ ports nic
@@ -128,125 +152,145 @@ connectNICs nic nic' = do
         throwM $ PortAlreadyConnected (mac nic) n
 
 disconnectPort
-  :: NIC
+  :: (MonadIO m, MonadLogger m)
+  => NIC
   -> PortNum
-  -> STM ()
+  -> m ()
 disconnectPort nic n
   = case ports nic V.!? n of
       Nothing ->
         -- TODO: alert user to index out of bounds error?
         return ()
       Just p -> do
-        mate' <- readTVar (mate p)
-        case mate' of
-          Nothing ->
-            throwM $ PortDisconnected (mac nic) n
-          Just q -> do
-            -- __NOTE__: We do not check if the mate is already
-            -- disconnected.
-            writeTVar (mate q) Nothing
-            writeTVar (mate p) Nothing
+        atomically $ do 
+          mate' <- readTVar (mate p)
+          case mate' of
+            Nothing ->
+              throwM $ PortDisconnected (mac nic) n
+            Just q -> do
+              -- __NOTE__: We do not check if the mate is already
+              -- disconnected.
+              writeTVar (mate q) Nothing
+              writeTVar (mate p) Nothing
+        logInfoP (mac nic) n $ "Disconnected port"
 
 sendOnNIC
-  :: LB.ByteString -- ^ Payload.
-  -> MAC -- ^ Destination.
+  :: (MonadIO m, MonadLogger m)
+  => OutFrame -- ^ The source MAC here is allowed to differ from the NIC's MAC.
   -> NIC
   -> PortNum
-  -> STM ()
-sendOnNIC payload destination nic n 
+  -> m ()
+sendOnNIC frame nic n 
   = case ports nic V.!? n of
       Nothing -> 
         -- TODO: alert user to index out of bounds error?
         return ()
-      Just p -> do 
-        let
-          frame
-            = Frame destination (mac nic) payload
-        mate' <- readTVar (mate p)
-        case mate' of
-          Nothing ->
-            throwM $ PortDisconnected (mac nic) n
-          Just q ->
-            writeTQueue (buffer q) frame
+      Just p -> do
+        atomically $ do
+          mate' <- readTVar (mate p)
+          case mate' of
+            Nothing ->
+              throwM $ PortDisconnected (mac nic) n
+            Just q ->
+              writeTQueue (buffer q) frame
+        logInfoP (mac nic) n $ "Sending frame to " <> (T.pack . show) (destination frame)
 
 -- | Wait on all ports of a NIC for the next incoming frame. This is a
--- blocking method.
+-- blocking method. Behaviour is affected by the NIC's promiscuity
+-- setting (see 'setPromiscuity').
 receiveOnNIC
-  :: NIC
-  -> IO (PortNum, InFrame)
+  :: (MonadIO m, MonadBaseControl IO m, MonadLogger m)
+  => NIC
+  -> m (PortNum, InFrame)
 receiveOnNIC nic = do
   -- __NOTE__: by reading the promiscuous setting before initiating
   -- the receieve, we cannot change this setting in-flight.
-  promis <- readTVarIO (promiscuous nic)
-  asyncs <- mapM (async . atomically . portAction promis) . V.toList . ports $ nic
-  let
-    indexedAsyncs
-      = zipWith (fmap . (,)) [0..] asyncs 
-  (portNum, frame) <- fmap snd . waitAnyCancel $ indexedAsyncs
-  let
-    dest
-      = destination frame
-    frame'
-      = if dest == broadcastAddr
-          then
-            frame { destination = Broadcast }
-          else
-            frame { destination = MAC dest }
-  return (portNum, frame')
+  promis <- readTVarIO (promiscuity nic)
+  asyncs <- V.mapM (\(i, p) -> async $ portAction promis i p) . V.indexed . ports $ nic
+  fmap snd . waitAnyCancel . V.toList $ asyncs
   where
-    portAction isPromiscuous p
+    portAction isPromiscuous i p
       = action
       where
-        action = do 
-          frame <- readTQueue (buffer p)
-          if isPromiscuous
-            then
-              return frame
-            else
-              if mac nic == destination frame
-                then
-                  return frame
-                else
-                  action
+        action = do
+          frame <- atomically $ readTQueue (buffer p)
+          let
+            dest
+              = destination frame 
+          if
+            | dest == broadcastAddr -> 
+                return (i, frame { destination = Broadcast })
+            | dest == mac nic ->
+                return (i, frame { destination = MAC dest })
+            | otherwise ->
+                if isPromiscuous
+                  then
+                    return (i, frame { destination = MAC dest })
+                  else do
+                    logDebugP (mac nic) i $ "Dropping frame destined for " <> (T.pack . show) dest
+                    action
 
-class Node n where
-  interfaces
-    :: n
-    -> Vector NIC -- ^ Vector indexed by 'InterfaceNum'.
-    
-  send
-    :: LB.ByteString -- ^ Frame payload.
-    -> MAC -- ^ Destination address.
-    -> InterfaceNum
-    -> PortNum
-    -> n
-    -> STM ()
+setPromiscuity
+  :: (MonadIO m, MonadLogger m)
+  => NIC
+  -> Bool
+  -> m ()
+setPromiscuity nic b = do
+  old <- atomically $ swapTVar (promiscuity nic) b
+  when (old /= b) $
+    if b
+      then
+        logInfo' (mac nic) $ "Enabling promiscuity mode"
+      else
+        logInfo' (mac nic) $ "Disabling promiscuity mode"
 
-  receive
-    :: InterfaceNum
-    -> n
-    -> IO (PortNum, InFrame)
-
--- | 'ReaderT' version of 'interfaces'.
-interfacesR :: (Monad m, Node n) => ReaderT n m (Vector NIC)
-interfacesR
-  = reader interfaces
-
--- | 'ReaderT' version of 'send'.
-sendR
-  :: Node n
-  => LB.ByteString
+getMAC
+  :: NIC
   -> MAC
-  -> InterfaceNum
-  -> PortNum
-  -> ReaderT n STM ()
-sendR payload dest i j
-  = ReaderT $ send payload dest i j 
+getMAC
+  = mac
 
--- | 'ReaderT' version of 'receive'.
-receiveR
-  :: Node n
-  => InterfaceNum
-  -> ReaderT n IO (PortNum, InFrame)
-receiveR i
-  = ReaderT $ receive i
+portCount
+  :: NIC
+  -> Int
+portCount
+  = V.length . ports
+
+---------------
+-- Utilities --
+---------------
+
+logInfo'
+  :: MonadLogger m
+  => MAC
+  -> T.Text
+  -> m ()
+logInfo' mac 
+  = logInfoNS sourceStr
+  where
+    sourceStr
+      = T.pack . show $ mac
+
+logInfoP
+  :: MonadLogger m
+  => MAC
+  -> PortNum
+  -> T.Text
+  -> m ()
+logInfoP mac n 
+  = logInfoNS sourceStr
+  where
+    sourceStr
+      = T.pack $ show mac <> " (" <> show n <> ")"
+
+logDebugP
+  :: MonadLogger m
+  => MAC
+  -> PortNum
+  -> T.Text
+  -> m ()
+logDebugP mac n 
+  = logDebugNS sourceStr
+  where
+    sourceStr
+      = T.pack $ show mac <> " (" <> show n <> ")"
