@@ -76,7 +76,7 @@ receive
                   = frame { destination = dest }
                 forward i = do
                   atomically $ sendOnNIC outFrame nic i
-                  logDebugP (getMAC nic) i . T.pack $ "Forwarding frame from " <> show dest <> " to " <> (show . source) frame
+                  logDebugP (getMAC nic) i . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
                   
               void $ mapConcurrently forward indices
               action

@@ -121,14 +121,15 @@ connectNICs nic nic' = do
     then
       throwM $ ConnectToSelf (mac nic)
     else do
-      atomically $ do 
+      (portNum, portNum') <- atomically $ do 
         (portNum, p) <- firstFreePort nic
         (portNum', p') <- firstFreePort nic'
         checkDisconnected nic portNum p
         checkDisconnected nic' portNum' p'
         writeTVar (mate p) (Just p')
         writeTVar (mate p') (Just p)
-      logInfoN . T.pack $ "Connected " <> show (mac nic) <> " and " <> show (mac nic')
+        return (portNum, portNum')
+      logInfoN . T.pack $ "Connected " <> show (mac nic) <> "(" <> show portNum <> ") and " <> show (mac nic') <> "(" <> show portNum' <> ")"
   where
     firstFreePort nic = do
       free <- V.filterM hasFreePort . V.indexed $ ports nic
