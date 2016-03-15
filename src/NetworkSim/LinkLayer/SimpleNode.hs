@@ -63,8 +63,10 @@ receive
   :: (MonadIO m, MonadBaseControl IO m, MonadLogger m)
   => Op m InFrame
 receive
-  = Op . ReaderT $ \node ->
-      snd <$> receiveOnNIC (interface node)
+  = Op . ReaderT $ \node -> do 
+      frame <- snd <$> receiveOnNIC (interface node)
+      logInfo' (getMAC . interface $ node) $ "Received frame from " <> (T.pack . show . source) frame
+      return frame
 
 -- | Run STM actions in 'Op' programs.
 atomically

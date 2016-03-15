@@ -279,7 +279,7 @@ logInfoP mac n
   = logInfoNS sourceStr
   where
     sourceStr
-      = T.pack $ show mac <> " (" <> show n <> ")"
+      = T.pack $ show mac <> "(" <> show n <> ")"
 
 logDebugP
   :: MonadLogger m
@@ -291,4 +291,4 @@ logDebugP mac n
   = logDebugNS sourceStr
   where
     sourceStr
-      = T.pack $ show mac <> " (" <> show n <> ")"
+      = T.pack $ show mac <> "(" <> show n <> ")"
