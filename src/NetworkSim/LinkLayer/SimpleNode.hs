@@ -1,11 +1,17 @@
+-- | This module is intended to be imported qualified.
+
 {-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module NetworkSim.LinkLayer.SimpleNode
-  ( SimpleNode ()
+  ( SimpleNode (interface)
   , new
+    -- * SimpleNode API
   , Op
+  , runOp
   , send
   , receive
+  , atomically
   ) where
 
 import NetworkSim.LinkLayer
@@ -13,6 +19,8 @@ import NetworkSim.LinkLayer
 import Control.Monad.Reader
 import Control.Monad.Logger
 import Control.Monad.Trans.Control
+import Control.Concurrent.STM.Lifted (STM)
+import qualified Control.Concurrent.STM.Lifted as STM
 
 -- | A single-interface, single-report network node.
 data SimpleNode = SimpleNode
@@ -24,7 +32,15 @@ new
 new
   = SimpleNode <$> newNIC 1 False
 
-type Op = ReaderT SimpleNode
+newtype Op m a = Op (ReaderT SimpleNode m a)
+  deriving (Functor, Applicative, Monad, MonadLogger)
+
+runOp
+  :: SimpleNode
+  -> Op m a
+  -> m a
+runOp simpleNode (Op action)
+  = runReaderT action simpleNode
 
 send
   :: (MonadIO m, MonadLogger m)
@@ -32,7 +48,7 @@ send
   -> MAC -- ^ Destination address.
   -> Op m ()
 send payload dest
-  = ReaderT $ \(interface -> nic) -> do 
+  = Op . ReaderT $ \(interface -> nic) -> do 
       let
         frame
           = Frame dest (getMAC nic) payload
@@ -42,5 +58,13 @@ receive
   :: (MonadIO m, MonadBaseControl IO m, MonadLogger m)
   => Op m InFrame
 receive
-  = ReaderT $ \node ->
+  = Op . ReaderT $ \node ->
       snd <$> receiveOnNIC (interface node)
+
+-- | Run STM actions in 'Op' programs.
+atomically
+  :: MonadIO m
+  => STM a
+  -> Op m a
+atomically
+  = Op . STM.atomically 
