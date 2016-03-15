@@ -1,12 +1,16 @@
 -- | The 'Repeater' type is actually a link-layer switch, with zero
--- intelligence employed when forwarding packets.
+-- intelligence employed when forwarding packets. This module is
+-- intended to be imported qualified.
+
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module NetworkSim.LinkLayer.Repeater
   ( -- * Repeater
-    Repeater (..)
+    Repeater (interface)
   , new
-    -- * Repeater programs
+    -- * Repeater API
   , Op
+  , runOp
   , receive
   , repeater
   ) where
@@ -32,13 +36,21 @@ new
 new n
   = Repeater <$> newNIC n True
 
-type Op = ReaderT Repeater    
+newtype Op m a = Op (ReaderT Repeater m a)
+  deriving (Functor, Applicative, Monad, MonadLogger)
+
+runOp
+  :: Repeater
+  -> Op m a
+  -> m a
+runOp r (Op action)
+  = runReaderT action r
 
 receive
   :: (MonadIO m, MonadBaseControl IO m, MonadLogger m)
   => Op m (PortNum, InFrame)
 receive
-  = ReaderT $ \(interface -> nic) -> do
+  = Op . ReaderT $ \(interface -> nic) -> do
       let
         action = do 
           (portNum, frame) <- receiveOnNIC nic
