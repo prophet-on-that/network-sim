@@ -2,7 +2,9 @@
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE FlexibleContexts #-}
 
-module Main where
+module Main
+  ( main
+  ) where
 
 import NetworkSim.LinkLayer
 import qualified NetworkSim.LinkLayer.SimpleNode as SimpleNode
@@ -18,47 +20,129 @@ import qualified Data.Vector as V
 import Data.String (fromString)
 import Control.Monad.Logger
 import Control.Monad.Trans.Control
+import Control.Concurrent.STM.Lifted
 
+defaultMessage
+  = "Hello, world!"
+  
 main
   = defaultMain $ testGroup "Link-layer Tests" 
-      [ connectT
-      , disconnectT
-      , sendT
+      [ testGroup "NIC"
+          [ connectT
+          , sendT
+          , disconnectT
+          ]
       , repeaterT
       ]
 
 connectT :: TestTree
 connectT
-  = testGroup "connectNICs"
+  = testGroup "Connecting"
       [ testCase "Connect NICs" connectNICsT
+      , testCase "Connect multiple NICs" connectMultipleT
+      , testCase "Do not connect when no free ports available" catchNoFreePortsT
       , testCase "Connect same NIC" connectSameT
       ]
   where
     connectNICsT 
       = runNoLoggingT $ do 
-        node0 <- SimpleNode.new
-        node1 <- SimpleNode.new
-        connectNICs (SimpleNode.interface node0) (SimpleNode.interface node1)
+          node0 <- newNIC 1 False
+          node1 <- newNIC 1 False
+          connectNICs node0 node1
+
+    connectMultipleT
+      = runNoLoggingT $ do
+          node0 <- newNIC 1 False
+          node1 <- newNIC 1 False
+          node2 <- newNIC 2 False
+          connectNICs node0 node2
+          connectNICs node1 node2
+
+    catchNoFreePortsT
+      = runNoLoggingT $ do
+          node0 <- newNIC 0 False
+          node1 <- newNIC 1 False
+          let
+            handler (NoFreePort _)
+              = return ()
+            handler e
+              = throwM e
+          handle handler $ do 
+            connectNICs node0 node1
+            liftIO $ assertFailure "No exception thrown"
     
     connectSameT
-      = runNoLoggingT $ do 
-          node0 <- SimpleNode.new
+      = runNoLoggingT $ do
+          node0 <- newNIC 2 False
           let
-            interface0
-              = SimpleNode.interface node0
             handler (ConnectToSelf _)
               = return ()
             handler e
               = throwM e
           handle handler $ do 
-            connectNICs interface0 interface0
+            connectNICs node0 node0
             liftIO $ assertFailure "No exception thrown"
+
+sendT :: TestTree
+sendT
+  = testGroup "Transmitting"
+      [ testCase "Send and receive" sendAndReceiveT
+      , testCase "Receive and reply" receiveAndReplyT
+      ]
+  where
+    sendAndReceiveT
+      = runNoLoggingT $ do 
+          node0 <- newNIC 1 False
+          node1 <- newNIC 1 False
+          connectNICs node0 node1
+          let
+            frame
+              = Frame (getMAC node1) (getMAC node0) defaultMessage
+          (_, payload . snd -> result) <- concurrently
+                           (atomically $ sendOnNIC frame node0 0)
+                           (atomically $ receiveOnNIC node1)
+          liftIO $ assertEqual "Transmitted payload does not equal message" defaultMessage result
+      
+    receiveAndReplyT
+      = runNoLoggingT $ do 
+          node0 <- newNIC 1 False
+          node1 <- newNIC 1 False
+          connectNICs node0 node1
+          let
+            addr0
+              = getMAC node0
+            addr1
+              = getMAC node1
+            msg0
+              = "Hello, world!"
+            msg1
+              = "Hello, too!"
+                
+            prog0 = do
+              let
+                frame
+                  = Frame addr1 addr0 msg0
+              atomically $ sendOnNIC frame node0 0
+              fmap (payload . snd) . atomically $ receiveOnNIC node0
+              
+            prog1 = do
+              msg <- fmap (payload . snd) . atomically $ receiveOnNIC node1
+              let
+                frame
+                  = Frame addr0 addr1 msg1
+              atomically $ sendOnNIC frame node1 0
+              return msg
+
+          (payload0, payload1) <- concurrently prog0 prog1
+          liftIO $ do
+            assertEqual "Payload 0 does not equal message" msg1 payload0
+            assertEqual "Payload 1 does not equal message" msg0 payload1
 
 disconnectT :: TestTree
 disconnectT
-  = testGroup "disconnectPort"
+  = testGroup "Disconnecting"
       [ testCase "Disconnecting impossible when already disconnected" disconnectDisconnectedT
-      -- , testCase "Sending impossible after disconnection" noSendT
+      , testCase "Sending impossible after disconnection" noSendT
       -- , testCase "Mate registers disconnection" noSendT'
       -- , testCase "Buffer still available after disconnection" bufferAvailableT
       ]
@@ -75,29 +159,17 @@ disconnectT
             disconnectPort (SimpleNode.interface node0) 0
             liftIO $ assertFailure "No exception thrown"
       
-    -- -- | Check disconnecting port can now no longer send.
-    -- noSendT = do
-    --   [mac0, mac1] <- replicateM 2 freshMAC
-    --   node0 <- atomically $ SimpleNode.new mac0
-    --   node1 <- atomically $ SimpleNode.new mac1
-    --   atomically $ connectNICs (SimpleNode.interface node0) (SimpleNode.interface node1)
-    --   let
-    --     p0 = do 
-    --       void receive
-    --       interface <- V.head <$> interfacesR
-    --       lift . atomically $ disconnectPort interface 0
-    --       let
-    --         handler (PortDisconnected _ 0)
-    --           = return ()
-    --         handler e
-    --           = throwM e
-    --       handle handler $ do 
-    --         mapReaderT atomically $ sendR "Hello, world" mac1 0 0
-    --         lift $ assertFailure "No exception thrown"
-
-    --     p1
-    --       = mapReaderT atomically $ sendR "Hello, world" mac0 0 0
-    --   void $ concurrently (runReaderT p0 node0) (runReaderT p1 node1)
+    -- | Check disconnected port can now no longer send.
+    noSendT
+      = runNoLoggingT $ do
+          node0 <- newNIC 1 False
+          node1 <- newNIC 1 False
+          connectNICs node0 node1
+          disconnectPort node0 0
+          let
+            frame
+              = Frame (getMAC node1) (getMAC node0) defaultMessage
+          atomically $ sendOnNIC frame node0 0 
 
     -- -- | Check mate of disconnected port can now no longer send.
     -- noSendT' = do 
@@ -149,59 +221,6 @@ disconnectT
           
     --   (payload, _) <- concurrently (runReaderT p0 node0) (runReaderT p1 node1)
     --   assertEqual "Transmitted payload does not equal message" message payload
-
-twoSimpleNodes
-  :: (MonadIO m, MonadThrow m, MonadBaseControl IO m, MonadLogger m)
-  => (Int -> MAC -> SimpleNode.Op m a) -- ^ Program to run on each 'SimpleNode'. Params: index, other_node_addr.
-  -> m (a, a)
-twoSimpleNodes p = do
-  node0 <- SimpleNode.new
-  node1 <- SimpleNode.new
-  connectNICs (SimpleNode.interface node0) (SimpleNode.interface node1)
-  let
-    mac0
-      = getMAC . SimpleNode.interface $ node0 
-    mac1
-      = getMAC . SimpleNode.interface $ node1
-  concurrently (SimpleNode.runOp node0 $ p 0 mac1) (SimpleNode.runOp node1 $ p 1 mac0)
-
-sendT :: TestTree
-sendT
-  = testGroup "send"
-      [ testCase "Send" simpleSendT
-      , testCase "Send and receive" sendAndReceiveT
-      ]
-  where
-    simpleSendT = do
-      let
-        message
-          = "Hello, world!"
-        p 0 mac1 = do 
-          SimpleNode.send message mac1
-          return mempty
-        p _ _ 
-          = payload <$> SimpleNode.receive
-      (_, result) <- runNoLoggingT $ twoSimpleNodes p
-      assertEqual "Transmitted payload does not equal message" message result
-      
-    sendAndReceiveT = do
-      let
-        msg0
-          = "Hello, world!"
-        msg1
-          = "Hello, too!"
-            
-        p 0 mac1 = do 
-          SimpleNode.send msg0 mac1
-          payload <$> SimpleNode.receive
-        p _ mac0 = do
-          msg <- payload <$> SimpleNode.receive
-          SimpleNode.send msg1 mac0
-          return msg
-            
-      (payload0, payload1) <- runNoLoggingT $ twoSimpleNodes p 
-      assertEqual "Payload 0 does not equal message" msg1 payload0
-      assertEqual "Payload 1 does not equal message" msg0 payload1
 
 starNetwork
   :: (MonadIO m, MonadLogger m, MonadBaseControl IO m, MonadThrow m)
