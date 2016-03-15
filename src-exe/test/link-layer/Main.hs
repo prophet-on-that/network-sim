@@ -143,20 +143,20 @@ disconnectT
   = testGroup "Disconnecting"
       [ testCase "Disconnecting impossible when already disconnected" disconnectDisconnectedT
       , testCase "Sending impossible after disconnection" noSendT
-      -- , testCase "Mate registers disconnection" noSendT'
-      -- , testCase "Buffer still available after disconnection" bufferAvailableT
+      , testCase "Mate registers disconnection" mateUnregisteredT
+      , testCase "Buffer still available after disconnection" bufferAvailableT
       ]
   where
     disconnectDisconnectedT
       = runNoLoggingT $ do 
-          node0 <- SimpleNode.new
+          node0 <- newNIC 1 False
           let
             handler (PortDisconnected _ 0)
               = return ()
             handler e
               = throwM e
           handle handler $ do
-            disconnectPort (SimpleNode.interface node0) 0
+            disconnectPort node0 0
             liftIO $ assertFailure "No exception thrown"
       
     -- | Check disconnected port can now no longer send.
@@ -169,58 +169,45 @@ disconnectT
           let
             frame
               = Frame (address node1) (address node0) defaultMessage
-          atomically $ sendOnNIC frame node0 0 
+            handler (PortDisconnected _ _)
+              = return ()
+            handler e
+              = throwM e
+          handle handler $ do 
+            atomically $ sendOnNIC frame node0 0
+            liftIO $ assertFailure "No exception thrown"
 
-    -- -- | Check mate of disconnected port can now no longer send.
-    -- noSendT' = do 
-    --   [mac0, mac1] <- replicateM 2 freshMAC
-    --   node0 <- atomically $ SimpleNode.new mac0
-    --   node1 <- atomically $ SimpleNode.new mac1
-    --   atomically $ connectNICs (SimpleNode.interface node0) (SimpleNode.interface node1)
-    --   signal <- newEmptyTMVarIO
-    --   let
-    --     p0 = do
-    --       interface <- V.head <$> interfacesR
-    --       lift . atomically $ do
-    --         disconnectPort interface 0
-    --         putTMVar signal ()
-
-    --     p1 = do
-    --       lift . atomically $ takeTMVar signal
-    --       let
-    --         handler (PortDisconnected _ 0)
-    --           = return ()
-    --         handler e
-    --           = throwM e
-    --       handle handler $ do
-    --         mapReaderT atomically $ sendR "Hello, world" mac0 0 0
-    --         lift $ assertFailure "No exception thrown."
-    --   void $ concurrently (runReaderT p0 node0) (runReaderT p1 node1)
-
-    -- -- | Check buffer contents still available post disconnect
-    -- bufferAvailableT = do 
-    --   [mac0, mac1] <- replicateM 2 freshMAC
-    --   node0 <- atomically $ SimpleNode.new mac0
-    --   node1 <- atomically $ SimpleNode.new mac1
-    --   atomically $ connectNICs (SimpleNode.interface node0) (SimpleNode.interface node1)
-    --   signal <- newEmptyTMVarIO
-    --   let
-    --     p0 = do
-    --       interface <- V.head <$> interfacesR
-    --       lift . atomically $ do
-    --         takeTMVar signal
-    --         disconnectPort interface 0
-    --       payload . snd <$> receiveR 0
-
-    --     message
-    --       = "Hello, world"
-            
-    --     p1 = do
-    --       mapReaderT atomically $ sendR message mac0 0 0
-    --       lift . atomically $ putTMVar signal ()
+    -- | Check mate can no longer send after disconnect.
+    mateUnregisteredT
+      = runNoLoggingT $ do 
+          node0 <- newNIC 1 False
+          node1 <- newNIC 1 False
+          connectNICs node0 node1
+          disconnectPort node0 0
+          let
+            frame
+              = Frame (address node0) (address node1) defaultMessage
+            handler (PortDisconnected _ _)
+              = return ()
+            handler e
+              = throwM e
+          handle handler $ do 
+            atomically $ sendOnNIC frame node1 0
+            liftIO $ assertFailure "No exception thrown"
           
-    --   (payload, _) <- concurrently (runReaderT p0 node0) (runReaderT p1 node1)
-    --   assertEqual "Transmitted payload does not equal message" message payload
+    -- | Check buffer contents still available post disconnect
+    bufferAvailableT
+      = runNoLoggingT $ do
+          node0 <- newNIC 1 False
+          node1 <- newNIC 1 False
+          connectNICs node0 node1
+          let
+            frame
+              = Frame (address node1) (address node0) defaultMessage
+          atomically $ sendOnNIC frame node0 0 
+          disconnectPort node1 0
+          result <- fmap (payload . snd) . atomically $ receiveOnNIC node1
+          liftIO $ assertEqual "Transmitted payload does not equal message" defaultMessage result
 
 starNetwork
   :: (MonadIO m, MonadLogger m, MonadBaseControl IO m, MonadThrow m)
