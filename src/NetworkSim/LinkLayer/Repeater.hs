@@ -1,8 +1,6 @@
 -- | The 'Repeater' type is actually a link-layer switch, with zero
 -- intelligence employed when forwarding packets.
 
-{-# LANGUAGE ViewPatterns #-}
-
 module NetworkSim.LinkLayer.Repeater
   ( -- * Repeater
     Repeater (..)

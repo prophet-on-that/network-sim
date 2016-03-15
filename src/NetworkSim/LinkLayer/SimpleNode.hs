@@ -1,6 +1,5 @@
 -- | This module is intended to be imported qualified.
 
-{-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module NetworkSim.LinkLayer.SimpleNode

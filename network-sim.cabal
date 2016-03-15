@@ -36,6 +36,7 @@ library
   ghc-options: -W
   default-extensions:
       FlexibleContexts
+    , ViewPatterns
 
 Test-Suite test-link-layer
   type: exitcode-stdio-1.0
