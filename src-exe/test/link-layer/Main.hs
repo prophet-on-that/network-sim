@@ -34,24 +34,25 @@ connectT
       , testCase "Connect same NIC" connectSameT
       ]
   where
-    connectNICsT = do 
-      node0 <- SimpleNode.new
-      node1 <- SimpleNode.new
-      runNoLoggingT $ 
+    connectNICsT 
+      = runNoLoggingT $ do 
+        node0 <- SimpleNode.new
+        node1 <- SimpleNode.new
         connectNICs (SimpleNode.interface node0) (SimpleNode.interface node1)
     
-    connectSameT = do 
-      node0 <- SimpleNode.new
-      let
-        interface0
-          = SimpleNode.interface node0
-        handler (ConnectToSelf _)
-          = return ()
-        handler e
-          = throwM e
-      handle handler $ do 
-        runNoLoggingT $ connectNICs interface0 interface0
-        assertFailure "No exception thrown"
+    connectSameT
+      = runNoLoggingT $ do 
+          node0 <- SimpleNode.new
+          let
+            interface0
+              = SimpleNode.interface node0
+            handler (ConnectToSelf _)
+              = return ()
+            handler e
+              = throwM e
+          handle handler $ do 
+            connectNICs interface0 interface0
+            liftIO $ assertFailure "No exception thrown"
 
 disconnectT :: TestTree
 disconnectT
@@ -62,16 +63,17 @@ disconnectT
       -- , testCase "Buffer still available after disconnection" bufferAvailableT
       ]
   where
-    disconnectDisconnectedT = do
-      node0 <- SimpleNode.new
-      let
-        handler (PortDisconnected _ 0)
-          = return ()
-        handler e
-          = throwM e
-      handle handler $ do
-        runNoLoggingT $ disconnectPort (SimpleNode.interface node0) 0
-        assertFailure "No exception thrown"
+    disconnectDisconnectedT
+      = runNoLoggingT $ do 
+          node0 <- SimpleNode.new
+          let
+            handler (PortDisconnected _ 0)
+              = return ()
+            handler e
+              = throwM e
+          handle handler $ do
+            disconnectPort (SimpleNode.interface node0) 0
+            liftIO $ assertFailure "No exception thrown"
       
     -- -- | Check disconnecting port can now no longer send.
     -- noSendT = do

@@ -29,10 +29,12 @@ data SimpleNode = SimpleNode
   }
 
 new
-  :: MonadIO m
+  :: (MonadIO m, MonadLogger m)
   => m SimpleNode
-new
-  = SimpleNode <$> newNIC 1 False
+new = do
+  nic <- newNIC 1 False
+  logInfoN $ "Creating new SimpleNode with address " <> (T.pack . show . getMAC) nic
+  return $ SimpleNode nic
 
 newtype Op m a = Op (ReaderT SimpleNode m a)
   deriving (Functor, Applicative, Monad, MonadLogger)

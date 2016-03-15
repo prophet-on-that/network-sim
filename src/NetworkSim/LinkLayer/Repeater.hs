@@ -32,11 +32,13 @@ data Repeater = Repeater
   }
 
 new
-  :: MonadIO m
+  :: (MonadIO m, MonadLogger m)
   => Int -- ^ Number of ports. Pre: positive.
   -> m Repeater
-new n
-  = Repeater <$> newNIC n True
+new n = do
+  nic <- newNIC n True
+  logInfoN $ "Creating new Repeater with address " <> (T.pack . show . getMAC) nic
+  return $ Repeater nic
 
 newtype Op m a = Op (ReaderT Repeater m a)
   deriving (Functor, Applicative, Monad, MonadLogger)
