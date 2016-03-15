@@ -23,6 +23,7 @@ import Control.Monad.Logger
 import Control.Monad.Trans.Control
 import Data.Monoid
 import qualified Data.Text as T
+import Control.Concurrent.STM.Lifted
 
 -- | A single-interface switch, indiscriminately copying a request
 -- on a port to every other port.
@@ -31,8 +32,9 @@ data Repeater = Repeater
   }
 
 new
-  :: Int -- ^ Number of ports. Pre: positive.
-  -> IO Repeater
+  :: MonadIO m
+  => Int -- ^ Number of ports. Pre: positive.
+  -> m Repeater
 new n
   = Repeater <$> newNIC n True
 
@@ -71,7 +73,7 @@ receive
                 outFrame
                   = frame { destination = dest }
                 forward i = do
-                  sendOnNIC outFrame nic i
+                  atomically $ sendOnNIC outFrame nic i
                   logDebugP (getMAC nic) i . T.pack $ "Forwarding frame from " <> show dest <> " to " <> (show . source) frame
                   
               void $ mapConcurrently forward indices

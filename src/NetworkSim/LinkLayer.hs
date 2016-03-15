@@ -1,5 +1,4 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE FlexibleContexts #-}
 
@@ -103,11 +102,12 @@ instance Eq NIC where
     = mac nic == mac nic'
 
 newNIC
-  :: Int -- ^ Number of ports. Pre: >= 1.
+  :: MonadIO m
+  => Int -- ^ Number of ports. Pre: >= 1.
   -> Bool -- ^ Initial promiscuity setting.
-  -> IO NIC
+  -> m NIC
 newNIC n promis = do
-  mac <- freshMAC
+  mac <- liftIO freshMAC
   atomically $ NIC mac <$> V.replicateM n newPort <*> newTVar promis
 
 -- | Connect two NICs, using the first free port available for each.
@@ -175,25 +175,22 @@ disconnectPort nic n
         logInfoP (mac nic) n $ "Disconnected port"
 
 sendOnNIC
-  :: (MonadIO m, MonadLogger m)
-  => OutFrame -- ^ The source MAC here is allowed to differ from the NIC's MAC.
+  :: OutFrame -- ^ The source MAC here is allowed to differ from the NIC's MAC.
   -> NIC
   -> PortNum
-  -> m ()
+  -> STM ()
 sendOnNIC frame nic n 
   = case ports nic V.!? n of
       Nothing -> 
         -- TODO: alert user to index out of bounds error?
         return ()
       Just p -> do
-        atomically $ do
-          mate' <- readTVar (mate p)
-          case mate' of
-            Nothing ->
-              throwM $ PortDisconnected (mac nic) n
-            Just q ->
-              writeTQueue (buffer q) frame
-        logInfoP (mac nic) n $ "Sending frame to " <> (T.pack . show) (destination frame)
+        mate' <- readTVar (mate p)
+        case mate' of
+          Nothing ->
+            throwM $ PortDisconnected (mac nic) n
+          Just q ->
+            writeTQueue (buffer q) frame
 
 -- | Wait on all ports of a NIC for the next incoming frame. This is a
 -- blocking method. Behaviour is affected by the NIC's promiscuity

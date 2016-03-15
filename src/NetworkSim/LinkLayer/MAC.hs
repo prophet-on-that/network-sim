@@ -1,5 +1,3 @@
-{-# LANGUAGE ViewPatterns #-}
-
 module NetworkSim.LinkLayer.MAC
   ( MAC ()
   , freshMAC

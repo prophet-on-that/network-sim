@@ -20,6 +20,8 @@ import Control.Monad.Logger
 import Control.Monad.Trans.Control
 import Control.Concurrent.STM.Lifted (STM)
 import qualified Control.Concurrent.STM.Lifted as STM
+import Data.Monoid
+import qualified Data.Text as T
 
 -- | A single-interface, single-report network node.
 data SimpleNode = SimpleNode
@@ -27,7 +29,8 @@ data SimpleNode = SimpleNode
   }
 
 new
-  :: IO SimpleNode
+  :: MonadIO m
+  => m SimpleNode
 new
   = SimpleNode <$> newNIC 1 False
 
@@ -51,8 +54,9 @@ send payload dest
       let
         frame
           = Frame dest (getMAC nic) payload
-      sendOnNIC frame nic 0
-  
+      STM.atomically $ sendOnNIC frame nic 0
+      logInfo' (getMAC nic) $ "Sending frame to " <> (T.pack . show) dest
+      
 receive
   :: (MonadIO m, MonadBaseControl IO m, MonadLogger m)
   => Op m InFrame

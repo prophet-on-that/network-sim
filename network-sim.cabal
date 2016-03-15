@@ -37,6 +37,7 @@ library
   default-extensions:
       FlexibleContexts
     , ViewPatterns
+    , OverloadedStrings
 
 Test-Suite test-link-layer
   type: exitcode-stdio-1.0
@@ -48,11 +49,14 @@ Test-Suite test-link-layer
       base 
     , network-sim
     , stm
-    , async
+    , lifted-async
     , exceptions
     , vector
     , tasty == 0.10.*
     , tasty-hunit == 0.9.*
+    , mtl
+    , monad-logger
+    , monad-control
 
 source-repository head
   type:     git
