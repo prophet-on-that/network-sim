@@ -32,7 +32,7 @@ data Repeater = Repeater
   }
 
 new
-  :: (MonadIO m, MonadLogger m)
+  :: (MonadIO m, MonadLogger m, MonadBaseControl IO m)
   => Int -- ^ Number of ports. Pre: positive.
   -> m Repeater
 new n = do
@@ -57,7 +57,7 @@ receive
   = Op . ReaderT $ \(interface -> nic) -> do
       let
         action = do 
-          (portNum, frame) <- receiveOnNIC nic
+          (portNum, frame) <- atomically $ receiveOnNIC nic
           let
             dest
               = case destination frame of

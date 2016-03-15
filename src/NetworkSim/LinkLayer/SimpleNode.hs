@@ -29,7 +29,7 @@ data SimpleNode = SimpleNode
   }
 
 new
-  :: (MonadIO m, MonadLogger m)
+  :: (MonadIO m, MonadLogger m, MonadBaseControl IO m)
   => m SimpleNode
 new = do
   nic <- newNIC 1 False
@@ -64,7 +64,7 @@ receive
   => Op m InFrame
 receive
   = Op . ReaderT $ \node -> do 
-      frame <- snd <$> receiveOnNIC (interface node)
+      frame <- STM.atomically $ snd <$> receiveOnNIC (interface node)
       logInfo' (getMAC . interface $ node) $ "Received frame from " <> (T.pack . show . source) frame
       return frame
 

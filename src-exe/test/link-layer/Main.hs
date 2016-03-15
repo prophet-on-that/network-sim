@@ -263,5 +263,5 @@ repeaterT
               = fromString . show $ i
           SimpleNode.send msg mac
           payload <$> SimpleNode.receive
-      ret <- runStderrLoggingT $ starNetwork n p
+      ret <- runNoLoggingT $ starNetwork n p
       assertEqual "Received payloads do not equal transmitted messages" ret (fmap (fromString . show) . V.fromList $ n - 1 : [0 .. n - 2])

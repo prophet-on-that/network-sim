@@ -43,12 +43,12 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Control.Monad
 import Data.Maybe
-import Control.Concurrent.Async.Lifted
 import Control.Monad.Logger
 import qualified Data.Text as T
 import Data.Monoid
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Control
+import Control.Concurrent.Lifted (fork)
 
 type PortNum = Int
 
@@ -83,7 +83,7 @@ type InFrame = Frame Destination
 
 data Port = Port
   { mate :: !(TVar (Maybe Port))
-  , buffer :: !(TQueue OutFrame)
+  , buffer' :: !(TQueue OutFrame)
   }
 
 newPort :: STM Port
@@ -95,6 +95,7 @@ data NIC = NIC
   { mac :: {-# UNPACK #-} !MAC
   , ports :: {-# UNPACK #-} !(Vector Port)
   , promiscuity :: !(TVar Bool)
+  , buffer :: !(TQueue (PortNum, InFrame)) -- ^ Buffer of messages filtered by ports.
   }
 
 instance Eq NIC where
@@ -102,13 +103,35 @@ instance Eq NIC where
     = mac nic == mac nic'
 
 newNIC
-  :: MonadIO m
+  :: (MonadIO m, MonadBaseControl IO m, MonadLogger m)
   => Int -- ^ Number of ports. Pre: >= 1.
   -> Bool -- ^ Initial promiscuity setting.
   -> m NIC
 newNIC n promis = do
   mac <- liftIO freshMAC
-  atomically $ NIC mac <$> V.replicateM n newPort <*> newTVar promis
+  nic <- atomically $ NIC mac <$> V.replicateM n newPort <*> newTVar promis <*> newTQueue
+  V.imapM_ (\i p -> void . fork $ portAction nic i p) $ ports nic -- (void . fork . portAction nic) $ ports nic
+  return nic
+  where
+    portAction nic i p
+      = forever $ do
+          frame <- atomically $ readTQueue (buffer' p)
+          let
+            dest
+              = destination frame
+          if
+            | dest == broadcastAddr -> 
+                 atomically $ writeTQueue (buffer nic) (i, frame { destination = Broadcast })
+            | dest == mac nic ->
+                atomically $ writeTQueue (buffer nic) (i, frame { destination = MAC dest })
+            | otherwise -> do
+                written <- atomically $ do
+                  isPromiscuous <- readTVar (promiscuity nic)
+                  when isPromiscuous $
+                    writeTQueue (buffer nic) (i, frame { destination = MAC dest })
+                  return isPromiscuous
+                when written $
+                  logDebugP (mac nic) i $ "Dropping frame destined for " <> (T.pack . show) dest
 
 -- | Connect two NICs, using the first free port available for each.
 connectNICs
@@ -191,42 +214,16 @@ sendOnNIC frame nic n
           Nothing ->
             throwM $ PortDisconnected (mac nic) n
           Just q ->
-            writeTQueue (buffer q) frame
+            writeTQueue (buffer' q) frame
 
 -- | Wait on all ports of a NIC for the next incoming frame. This is a
 -- blocking method. Behaviour is affected by the NIC's promiscuity
 -- setting (see 'setPromiscuity').
 receiveOnNIC
-  :: (MonadIO m, MonadBaseControl IO m, MonadLogger m)
-  => NIC
-  -> m (PortNum, InFrame)
-receiveOnNIC nic = do
-  -- __NOTE__: by reading the promiscuous setting before initiating
-  -- the receieve, we cannot change this setting in-flight.
-  promis <- readTVarIO (promiscuity nic)
-  asyncs <- V.mapM (\(i, p) -> async $ portAction promis i p) . V.indexed . ports $ nic
-  fmap snd . waitAnyCancel . V.toList $ asyncs
-  where
-    portAction isPromiscuous i p
-      = action
-      where
-        action = do
-          frame <- atomically $ readTQueue (buffer p)
-          let
-            dest
-              = destination frame 
-          if
-            | dest == broadcastAddr -> 
-                return (i, frame { destination = Broadcast })
-            | dest == mac nic ->
-                return (i, frame { destination = MAC dest })
-            | otherwise ->
-                if isPromiscuous
-                  then
-                    return (i, frame { destination = MAC dest })
-                  else do
-                    logDebugP (mac nic) i $ "Dropping frame destined for " <> (T.pack . show) dest
-                    action
+  :: NIC
+  -> STM (PortNum, InFrame)
+receiveOnNIC 
+  = readTQueue . buffer
 
 setPromiscuity
   :: (MonadIO m, MonadLogger m)
