@@ -37,7 +37,7 @@ new
   -> m Repeater
 new n = do
   nic <- newNIC n True
-  logInfoN $ "Creating new Repeater with address " <> (T.pack . show . getMAC) nic
+  logInfoN $ "Creating new Repeater with address " <> (T.pack . show . address) nic
   return $ Repeater nic
 
 newtype Op m a = Op (ReaderT Repeater m a)
@@ -65,7 +65,7 @@ receive
                     broadcastAddr
                   MAC a ->
                     a
-          if dest == getMAC nic
+          if dest == address nic
             then
               return (portNum, frame)
             else do
@@ -76,7 +76,7 @@ receive
                   = frame { destination = dest }
                 forward i = do
                   atomically $ sendOnNIC outFrame nic i
-                  logDebugP (getMAC nic) i . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
+                  logDebugP (address nic) i . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
                   
               void $ mapConcurrently forward indices
               action

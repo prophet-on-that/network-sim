@@ -20,7 +20,7 @@ module NetworkSim.LinkLayer
     -- * Network Interface Controller (NIC)
   , NIC ()
   , newNIC
-  , getMAC
+  , address
   , portCount
   , connectNICs
   , disconnectPort
@@ -239,10 +239,10 @@ setPromiscuity nic b = do
       else
         logInfo' (mac nic) $ "Disabling promiscuity mode"
 
-getMAC
+address
   :: NIC
   -> MAC
-getMAC
+address
   = mac
 
 portCount

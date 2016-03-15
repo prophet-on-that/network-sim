@@ -97,7 +97,7 @@ sendT
           connectNICs node0 node1
           let
             frame
-              = Frame (getMAC node1) (getMAC node0) defaultMessage
+              = Frame (address node1) (address node0) defaultMessage
           (_, payload . snd -> result) <- concurrently
                            (atomically $ sendOnNIC frame node0 0)
                            (atomically $ receiveOnNIC node1)
@@ -110,9 +110,9 @@ sendT
           connectNICs node0 node1
           let
             addr0
-              = getMAC node0
+              = address node0
             addr1
-              = getMAC node1
+              = address node1
             msg0
               = "Hello, world!"
             msg1
@@ -168,7 +168,7 @@ disconnectT
           disconnectPort node0 0
           let
             frame
-              = Frame (getMAC node1) (getMAC node0) defaultMessage
+              = Frame (address node1) (address node0) defaultMessage
           atomically $ sendOnNIC frame node0 0 
 
     -- -- | Check mate of disconnected port can now no longer send.
@@ -231,11 +231,11 @@ starNetwork n p = do
   nodes <- V.replicateM n SimpleNode.new
   let
     macs
-      = fmap (getMAC . SimpleNode.interface) nodes
+      = fmap (address . SimpleNode.interface) nodes
   repeater <- Repeater.new n
   let
     repeaterMAC
-      = getMAC . Repeater.interface $ repeater
+      = address . Repeater.interface $ repeater
   mapM (connectNICs (Repeater.interface repeater) . SimpleNode.interface) nodes
   let
     nodeProgram i node = do

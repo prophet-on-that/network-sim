@@ -33,7 +33,7 @@ new
   => m SimpleNode
 new = do
   nic <- newNIC 1 False
-  logInfoN $ "Creating new SimpleNode with address " <> (T.pack . show . getMAC) nic
+  logInfoN $ "Creating new SimpleNode with address " <> (T.pack . show . address) nic
   return $ SimpleNode nic
 
 newtype Op m a = Op (ReaderT SimpleNode m a)
@@ -55,9 +55,9 @@ send payload dest
   = Op . ReaderT $ \(interface -> nic) -> do 
       let
         frame
-          = Frame dest (getMAC nic) payload
+          = Frame dest (address nic) payload
       STM.atomically $ sendOnNIC frame nic 0
-      logInfo' (getMAC nic) $ "Sending frame to " <> (T.pack . show) dest
+      logInfo' (address nic) $ "Sending frame to " <> (T.pack . show) dest
       
 receive
   :: (MonadIO m, MonadBaseControl IO m, MonadLogger m)
@@ -65,7 +65,7 @@ receive
 receive
   = Op . ReaderT $ \node -> do 
       frame <- STM.atomically $ snd <$> receiveOnNIC (interface node)
-      logInfo' (getMAC . interface $ node) $ "Received frame from " <> (T.pack . show . source) frame
+      logInfo' (address . interface $ node) $ "Received frame from " <> (T.pack . show . source) frame
       return frame
 
 -- | Run STM actions in 'Op' programs.
