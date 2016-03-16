@@ -42,8 +42,8 @@ connectT
   = testGroup "Connecting"
       [ testCase "Connect NICs" connectNICsT
       , testCase "Connect multiple NICs" connectMultipleT
-      , testCase "Do not connect when no free ports available" catchNoFreePortsT
-      , testCase "Connect same NIC" connectSameT
+      , testCase "Connecting fails when no free ports available" catchNoFreePortsT
+      , testCase "Connecting same NIC fails" connectSameT
       ]
   where
     connectNICsT 
