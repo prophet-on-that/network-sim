@@ -111,7 +111,7 @@ newNIC
 newNIC n promis = do
   mac <- liftIO freshMAC
   nic <- atomically $ NIC mac <$> V.replicateM n newPort <*> newTVar promis <*> newTQueue
-  V.imapM_ (\i p -> void . fork $ portAction nic i p) $ ports nic -- (void . fork . portAction nic) $ ports nic
+  V.imapM_ (\i p -> void . fork $ portAction nic i p) $ ports nic
   return nic
   where
     portAction nic i p
@@ -131,7 +131,7 @@ newNIC n promis = do
                   when isPromiscuous $
                     writeTQueue (buffer nic) (i, frame { destination = MAC dest })
                   return isPromiscuous
-                when written $
+                when (not written) $
                   logDebugP (mac nic) i $ "Dropping frame destined for " <> (T.pack . show) dest
 
 -- | Connect two NICs, using the first free port available for each.

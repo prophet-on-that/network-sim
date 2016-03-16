@@ -31,6 +31,7 @@ main
           [ connectT
           , sendT
           , broadcastT
+          , promiscuityT
           , disconnectT
           ]
       , repeaterT
@@ -154,6 +155,37 @@ broadcastT
           liftIO $ do
             assertEqual "Transmitted frame is not identified as a broadcast" Broadcast (destination inFrame)
             assertEqual "Received payload does not equal message" defaultMessage (payload inFrame)
+      ]
+
+promiscuityT :: TestTree
+promiscuityT
+  = testGroup "Promiscuous mode"
+      [ testCase "Non-promiscuous NIC ignores frame with other address" . runNoLoggingT $ do
+          addr <- liftIO freshMAC
+          node0 <- newNIC 1 False
+          node1 <- newNIC 1 False
+          connectNICs node0 node1
+          let
+            frame
+              = Frame addr (address node0) defaultMessage
+            frame'
+              = Frame (address node1) (address node0) defaultMessage
+          atomically $ do
+            sendOnNIC frame node0 0
+            sendOnNIC frame' node0 0 
+          inFrame <- fmap snd . atomically $ receiveOnNIC node1
+          liftIO $ assertEqual "Expect frame with other destination to be dropped" (MAC $ address node1) (destination inFrame)
+
+      , testCase "Promiscuous NIC accepts frame with other address" . runNoLoggingT $ do
+          addr <- liftIO freshMAC
+          node0 <- newNIC 1 False
+          node1 <- newNIC 1 True
+          connectNICs node0 node1
+          let
+            frame
+              = Frame addr (address node0) defaultMessage
+          atomically $ sendOnNIC frame node0 0
+          void . atomically $ receiveOnNIC node1
       ]
 
 disconnectT :: TestTree
