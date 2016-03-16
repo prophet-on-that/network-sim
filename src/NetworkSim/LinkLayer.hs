@@ -76,7 +76,8 @@ type OutFrame = Frame MAC
 
 data Destination
   = Broadcast
-  | MAC MAC 
+  | MAC MAC
+  deriving (Eq, Show)
 
 -- | An Ethernet frame with parsed destination field.
 type InFrame = Frame Destination 

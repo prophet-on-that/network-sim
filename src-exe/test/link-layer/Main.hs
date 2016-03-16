@@ -30,6 +30,7 @@ main
       [ testGroup "NIC"
           [ connectT
           , sendT
+          , broadcastT
           , disconnectT
           ]
       , repeaterT
@@ -138,6 +139,23 @@ sendT
             assertEqual "Payload 0 does not equal message" msg1 payload0
             assertEqual "Payload 1 does not equal message" msg0 payload1
 
+broadcastT :: TestTree
+broadcastT
+  = testGroup "Broadcast"
+      [ testCase "NIC receives broadcast message" . runNoLoggingT $ do
+          node0 <- newNIC 1 False
+          node1 <- newNIC 1 False
+          connectNICs node0 node1
+          let
+            frame
+              = Frame broadcastAddr (address node0) defaultMessage
+          atomically $ sendOnNIC frame node0 0
+          inFrame <- fmap snd . atomically $ receiveOnNIC node1
+          liftIO $ do
+            assertEqual "Transmitted frame is not identified as a broadcast" Broadcast (destination inFrame)
+            assertEqual "Received payload does not equal message" defaultMessage (payload inFrame)
+      ]
+
 disconnectT :: TestTree
 disconnectT
   = testGroup "Disconnecting"
@@ -241,7 +259,7 @@ starNetwork n p = do
   
 repeaterT :: TestTree
 repeaterT
-  = testGroup "repeater"
+  = testGroup "Repeater"
       [ testCase "Replicate" replicateT
       , testCase "Replicate many" replicateManyT
       ]
