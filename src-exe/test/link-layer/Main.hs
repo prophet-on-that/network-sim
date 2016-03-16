@@ -169,7 +169,7 @@ promiscuityT
             frame
               = Frame addr (address node0) defaultMessage
             frame'
-              = Frame (address node1) (address node0) defaultMessage
+              = frame { destination = address node1 } 
           atomically $ do
             sendOnNIC frame node0 0
             sendOnNIC frame' node0 0 
@@ -186,6 +186,35 @@ promiscuityT
               = Frame addr (address node0) defaultMessage
           atomically $ sendOnNIC frame node0 0
           void . atomically $ receiveOnNIC node1
+
+      , testCase "Enabling promiscuous mode functions correctly" . runNoLoggingT $ do
+          addr <- liftIO freshMAC
+          node0 <- newNIC 1 False
+          node1 <- newNIC 1 False
+          setPromiscuity node1 True
+          connectNICs node0 node1
+          let
+            frame
+              = Frame addr (address node0) defaultMessage
+          atomically $ sendOnNIC frame node0 0
+          void . atomically $ receiveOnNIC node1
+          
+      , testCase "Disabling promiscuous mode functions correctly" . runNoLoggingT $ do
+          addr <- liftIO freshMAC
+          node0 <- newNIC 1 False
+          node1 <- newNIC 1 True
+          setPromiscuity node1 False
+          connectNICs node0 node1
+          let
+            frame
+              = Frame addr (address node0) defaultMessage
+            frame'
+              = frame { destination = address node1 } 
+          atomically $ do
+            sendOnNIC frame node0 0
+            sendOnNIC frame' node0 0 
+          inFrame <- fmap snd . atomically $ receiveOnNIC node1
+          liftIO $ assertEqual "Expect frame with other destination to be dropped" (MAC $ address node1) (destination inFrame)
       ]
 
 disconnectT :: TestTree
