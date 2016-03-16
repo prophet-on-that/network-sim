@@ -1,7 +1,6 @@
 name:                network-sim
 version:             0.1
-synopsis:            Simulating a network
-description:         Please see README.md
+synopsis:            Simulating (a subset of) the Internet protocol suite
 homepage:            http://github.com/prophet-on-that/network-sim
 license:             BSD3
 license-file:        LICENSE
