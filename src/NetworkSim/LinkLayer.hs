@@ -226,6 +226,9 @@ receiveOnNIC
 receiveOnNIC 
   = readTQueue . buffer
 
+-- | Toggle promiscuous mode for a 'NIC'. When promiscuous, a NIC will
+-- not drop the frames destined for another NIC. This is a useful
+-- operating mode for, e.g. switches.
 setPromiscuity
   :: (MonadIO m, MonadLogger m)
   => NIC
