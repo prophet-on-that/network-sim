@@ -23,7 +23,7 @@ import qualified Control.Concurrent.STM.Lifted as STM
 import Data.Monoid
 import qualified Data.Text as T
 
--- | A single-interface, single-report network node.
+-- | A single-interface, single-port network node.
 data SimpleNode = SimpleNode
   { interface :: {-# UNPACK #-} !NIC
   }
@@ -46,6 +46,8 @@ runOp
 runOp simpleNode (Op action)
   = runReaderT action simpleNode
 
+-- | This method will automatically set the source address of the
+-- frame to that of the underlying 'SimpleNode'.
 send
   :: (MonadIO m, MonadLogger m)
   => Payload
