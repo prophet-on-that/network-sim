@@ -289,7 +289,7 @@ disconnectT
           liftIO $ assertEqual "Transmitted payload does not equal message" defaultMessage result
 
 starNetwork
-  :: (MonadIO m, MonadLogger m, MonadBaseControl IO m, MonadThrow m)
+  :: (MonadIO m, MonadLogger m, MonadBaseControl IO m, MonadCatch m)
   => Int -- ^ Number of 'SimpleNode's connected to central repeater. Pre: >= 2.
   -> (MAC -> Int -> Vector MAC -> SimpleNode.Op m a) -- ^ Program to run on each 'SimpleNode'. Params: repeater_addr node_number other_addrs. other_addrs is rotated such that first addr is next in sequence.
   -> m (Vector a)
@@ -352,6 +352,24 @@ repeaterT
               atomically $ sendOnNIC frame node0 0
               result <- fmap (payload . snd) . atomically $ receiveOnNIC node1
               liftIO $ assertEqual "Transmitted payload does not equal message" defaultMessage result
+
+      , testCase "Repeater ignores disconnected ports" . runNoLoggingT $ do
+          node0 <- newNIC 1 False
+          node1 <- newNIC 1 False
+          repeater0 <- Repeater.new 3
+          connectNICs node0 (Repeater.interface repeater0)
+          connectNICs (Repeater.interface repeater0) node1 
+          let
+            frame
+              = Frame (address node1) (address node0) defaultMessage
+            frame'
+              = frame { destination = address . Repeater.interface $ repeater0 }
+          atomically $ do
+            sendOnNIC frame node0 0
+            -- Send message directly to repeater to flush buffer.
+            sendOnNIC frame' node0 0
+            
+          Repeater.runOp repeater0 $ void Repeater.receive
       ]
   where
     replicateT = do
