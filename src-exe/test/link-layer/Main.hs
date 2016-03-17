@@ -323,6 +323,35 @@ repeaterT
   = testGroup "Repeater"
       [ testCase "Replicate" replicateT
       , testCase "Replicate many" replicateManyT
+      , testCase "Repeater picks up own message" . runNoLoggingT $ do
+          node0 <- newNIC 1 False
+          repeater <- Repeater.new 1
+          connectNICs node0 (Repeater.interface repeater)
+          let
+            frame
+              = Frame (address . Repeater.interface $ repeater) (address node0) defaultMessage
+          atomically $ sendOnNIC frame node0 0
+          result <- Repeater.runOp repeater $ 
+            payload . snd <$> Repeater.receive
+          liftIO $ assertEqual "Transmitted payload does not equal message" defaultMessage result
+
+      , testCase "Message replicated several times" . runNoLoggingT $ do
+          node0 <- newNIC 1 False 
+          node1 <- newNIC 1 False
+          repeater0 <- Repeater.new 2
+          repeater1 <- Repeater.new 2
+          connectNICs node0 (Repeater.interface repeater0)
+          connectNICs (Repeater.interface repeater0) (Repeater.interface repeater1)
+          connectNICs (Repeater.interface repeater1) node1
+          
+          withAsync (Repeater.runOp repeater0 Repeater.repeater) . const $
+            withAsync (Repeater.runOp repeater1 Repeater.repeater) . const $ do 
+              let
+                frame
+                  = Frame (address node1) (address node0) defaultMessage
+              atomically $ sendOnNIC frame node0 0
+              result <- fmap (payload . snd) . atomically $ receiveOnNIC node1
+              liftIO $ assertEqual "Transmitted payload does not equal message" defaultMessage result
       ]
   where
     replicateT = do
