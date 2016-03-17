@@ -1,3 +1,6 @@
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+
 module NetworkSim.LinkLayer.MAC
   ( MAC ()
   , freshMAC
@@ -8,11 +11,13 @@ import Data.Int
 import Data.Bits
 import Data.Unique
 import Data.List (intercalate)
+import GHC.Generics
+import Data.Hashable
 
 -- | 48-bit medium access control (MAC) address.
 newtype MAC = MAC
   { mac :: Int64
-  } deriving (Eq)
+  } deriving (Eq, Generic, Hashable)
 
 instance Show MAC where
   show (mac -> mac')

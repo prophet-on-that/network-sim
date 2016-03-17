@@ -12,6 +12,7 @@ module NetworkSim.LinkLayer
   , Payload ()
   , OutFrame
   , Destination (..)
+  , destinationAddr 
   , InFrame
     -- * Hardware Port 
   , PortNum
@@ -78,6 +79,15 @@ data Destination
   = Broadcast
   | MAC MAC
   deriving (Eq, Show)
+
+-- | Retrieve underlying MAC address of a 'Destination'.
+destinationAddr
+  :: Destination
+  -> MAC
+destinationAddr Broadcast
+  = broadcastAddr
+destinationAddr (MAC addr)
+  = addr
 
 -- | An Ethernet frame with parsed destination field.
 type InFrame = Frame Destination 
