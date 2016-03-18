@@ -377,5 +377,30 @@ switchT
                prog = do 
                  SimpleNode.send defaultMessage broadcastAddr
                  replicateM_ (n - 1) $ void SimpleNode.receive
-             runConcurrently . sequenceA_ . map (Concurrently . flip SimpleNode.runOp prog) $ nodes 
+             runConcurrently . sequenceA_ . map (Concurrently . flip SimpleNode.runOp prog) $ nodes
+
+      , testCase "Switch learns port of host" . runNoLoggingT $ do
+          (switch, [node0, node1, node2]) <- switchStarNetwork 3
+          setPromiscuity (SimpleNode.interface node2) True
+          withAsync (Switch.runOp switch Switch.switch) . const $ do
+            let
+              prog0 = do
+                SimpleNode.send defaultMessage (address . SimpleNode.interface $ node1)
+                SimpleNode.receive
+              prog1 = do
+                void SimpleNode.receive
+                SimpleNode.send defaultMessage (address . SimpleNode.interface $ node0)
+                SimpleNode.send defaultMessage broadcastAddr
+              prog2 = do
+                void SimpleNode.receive
+                SimpleNode.receive
+                
+            (frame0, _, frame2) <- runConcurrently $ (,,)
+              <$> Concurrently (SimpleNode.runOp node0 prog0)
+              <*> Concurrently (SimpleNode.runOp node1 prog1)
+              <*> Concurrently (SimpleNode.runOp node2 prog2)
+                                   
+            liftIO $ do
+              assertEqual "Transmitted payload does not equal message" defaultMessage (payload frame0)
+              assertEqual "node2 should not receive frame destined for node0" Broadcast (destination frame2)
       ]
