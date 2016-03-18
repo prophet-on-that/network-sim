@@ -403,4 +403,46 @@ switchT
             liftIO $ do
               assertEqual "Transmitted payload does not equal message" defaultMessage (payload frame0)
               assertEqual "node2 should not receive frame destined for node0" Broadcast (destination frame2)
+
+      , testCase "Switch receives message to self" . runNoLoggingT $ do
+          (switch, [node0]) <- switchStarNetwork 1
+          SimpleNode.runOp node0 $ SimpleNode.send defaultMessage (address . Switch.interface $ switch)
+          frame <- Switch.runOp switch $
+            snd <$> Switch.receive
+          liftIO $ assertEqual "Transmitted payload does not equal message" defaultMessage (payload frame)
+
+      , testCase "Switch recovers on host reconnect" . runStderrLoggingT $ do
+          [node0, node1, node2] <- replicateM 3 SimpleNode.new
+          switch <- Switch.new 3
+          let
+            switchNIC
+              = Switch.interface switch
+          connectNICs switchNIC (SimpleNode.interface node0)
+          connectNICs switchNIC (SimpleNode.interface node1)
+          withAsync (Switch.runOp switch Switch.switch) . const $ do
+            void $ runConcurrently $ (,) 
+              <$> ( Concurrently . SimpleNode.runOp node0 $ do 
+                      SimpleNode.send defaultMessage (address . SimpleNode.interface $ node1)
+                      void SimpleNode.receive
+                      
+                  )
+              <*> ( Concurrently . SimpleNode.runOp node1 $ do
+                      void SimpleNode.receive
+                      SimpleNode.send defaultMessage (address . SimpleNode.interface $ node0)
+                  )
+            disconnectPort (SimpleNode.interface node0) 0
+            connectNICs switchNIC (SimpleNode.interface node2)
+            connectNICs switchNIC (SimpleNode.interface node0)
+            (frame, _) <- runConcurrently $ (,) 
+              <$> ( Concurrently . SimpleNode.runOp node0 $ do 
+                      SimpleNode.send defaultMessage broadcastAddr
+                      SimpleNode.receive
+                      
+                  )
+              <*> ( Concurrently . SimpleNode.runOp node1 $ do
+                      void SimpleNode.receive
+                      SimpleNode.send defaultMessage (address . SimpleNode.interface $ node0)
+                  )
+            liftIO $ assertEqual "Transmitted payload does not equal message" defaultMessage (payload frame)
+          
       ]
