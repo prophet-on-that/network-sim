@@ -221,8 +221,6 @@ disconnectT :: TestTree
 disconnectT
   = testGroup "Disconnecting"
       [ testCase "Disconnecting impossible when already disconnected" disconnectDisconnectedT
-      , testCase "Sending impossible after disconnection" noSendT
-      , testCase "Mate registers disconnection" mateUnregisteredT
       , testCase "Buffer still available after disconnection" bufferAvailableT
       ]
   where
@@ -238,42 +236,6 @@ disconnectT
             disconnectPort node0 0
             liftIO $ assertFailure "No exception thrown"
       
-    -- | Check disconnected port can now no longer send.
-    noSendT
-      = runNoLoggingT $ do
-          node0 <- newNIC 1 False
-          node1 <- newNIC 1 False
-          connectNICs node0 node1
-          disconnectPort node0 0
-          let
-            frame
-              = Frame (address node1) (address node0) defaultMessage
-            handler (PortDisconnected _ _)
-              = return ()
-            handler e
-              = throwM e
-          handle handler $ do 
-            atomically $ sendOnNIC frame node0 0
-            liftIO $ assertFailure "No exception thrown"
-
-    -- | Check mate can no longer send after disconnect.
-    mateUnregisteredT
-      = runNoLoggingT $ do 
-          node0 <- newNIC 1 False
-          node1 <- newNIC 1 False
-          connectNICs node0 node1
-          disconnectPort node0 0
-          let
-            frame
-              = Frame (address node0) (address node1) defaultMessage
-            handler (PortDisconnected _ _)
-              = return ()
-            handler e
-              = throwM e
-          handle handler $ do 
-            atomically $ sendOnNIC frame node1 0
-            liftIO $ assertFailure "No exception thrown"
-          
     -- | Check buffer contents still available post disconnect
     bufferAvailableT
       = runNoLoggingT $ do
@@ -352,24 +314,6 @@ repeaterT
               atomically $ sendOnNIC frame node0 0
               result <- fmap (payload . snd) . atomically $ receiveOnNIC node1
               liftIO $ assertEqual "Transmitted payload does not equal message" defaultMessage result
-
-      , testCase "Repeater ignores disconnected ports" . runNoLoggingT $ do
-          node0 <- newNIC 1 False
-          node1 <- newNIC 1 False
-          repeater0 <- Repeater.new 3
-          connectNICs node0 (Repeater.interface repeater0)
-          connectNICs (Repeater.interface repeater0) node1 
-          let
-            frame
-              = Frame (address node1) (address node0) defaultMessage
-            frame'
-              = frame { destination = address . Repeater.interface $ repeater0 }
-          atomically $ do
-            sendOnNIC frame node0 0
-            -- Send message directly to repeater to flush buffer.
-            sendOnNIC frame' node0 0
-            
-          Repeater.runOp repeater0 $ void Repeater.receive
       ]
   where
     replicateT = do

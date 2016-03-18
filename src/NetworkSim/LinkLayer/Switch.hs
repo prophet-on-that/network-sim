@@ -26,7 +26,6 @@ import Control.Monad.Trans.Control
 import Data.Monoid
 import qualified Data.Text as T
 import Control.Concurrent.STM.Lifted
-import Control.Monad.Catch
 import Control.Concurrent.Async.Lifted
 
 -- | A single-interface switch, which identifies hardware addresses
@@ -60,7 +59,7 @@ runOp r (Op action)
   = runReaderT action r
 
 receive
-  :: (MonadIO m, MonadBaseControl IO m, MonadLogger m, MonadCatch m)
+  :: (MonadIO m, MonadBaseControl IO m, MonadLogger m)
   => Op m (PortNum, InFrame)
 receive
   = Op . ReaderT $ \switch -> do
@@ -80,17 +79,9 @@ receive
                 outFrame
                   = frame { destination = dest }
                 forward i = do
-                  let
-                    handler (PortDisconnected _ _)
-                      = return ()
-                    handler e
-                      = throwM e 
-                  handle handler $ do
-                    atomically $ sendOnNIC outFrame nic i
-                    logDebugP (address nic) i . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
-                  
+                  atomically $ sendOnNIC outFrame nic i
+                  logDebugP (address nic) i . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
               void $ mapConcurrently forward indices
-              
               
           case destination frame of
             Broadcast -> do 
@@ -115,7 +106,6 @@ receive
                       let
                         outFrame
                           = frame { destination = dest }
-                      -- TODO: Need to catch host disconnected
                       atomically $ sendOnNIC outFrame nic port'
                       logDebugP (address nic) port' . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
                       action
@@ -124,7 +114,7 @@ receive
 -- | A program to run atop a 'Switch' which will discard any
 -- messages to the switch, forwarding frames forever.
 switch
-  :: (MonadIO m, MonadBaseControl IO m, MonadLogger m, MonadCatch m)
+  :: (MonadIO m, MonadBaseControl IO m, MonadLogger m)
   => Op m ()
 switch
   = forever $ void receive

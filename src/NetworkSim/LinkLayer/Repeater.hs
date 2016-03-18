@@ -24,7 +24,6 @@ import Control.Monad.Trans.Control
 import Data.Monoid
 import qualified Data.Text as T
 import Control.Concurrent.STM.Lifted
-import Control.Monad.Catch
 
 -- | A single-interface switch, indiscriminately copying a request
 -- on a port to every other port.
@@ -52,7 +51,7 @@ runOp r (Op action)
   = runReaderT action r
 
 receive
-  :: (MonadIO m, MonadBaseControl IO m, MonadLogger m, MonadCatch m)
+  :: (MonadIO m, MonadBaseControl IO m, MonadLogger m)
   => Op m (PortNum, InFrame)
 receive
   = Op . ReaderT $ \(interface -> nic) -> do
@@ -76,15 +75,8 @@ receive
                 outFrame
                   = frame { destination = dest }
                 forward i = do
-                  let
-                    handler (PortDisconnected _ _)
-                      = return ()
-                    handler e
-                      = throwM e 
-                  handle handler $ do
-                    atomically $ sendOnNIC outFrame nic i
-                    logDebugP (address nic) i . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
-                  
+                  atomically $ sendOnNIC outFrame nic i
+                  logDebugP (address nic) i . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
               void $ mapConcurrently forward indices
               action
       action  
@@ -93,7 +85,7 @@ receive
 -- messages to the repeater, implicitly forwarding any frame recieved
 -- on a port to every other port.
 repeater
-  :: (MonadIO m, MonadBaseControl IO m, MonadLogger m, MonadCatch m)
+  :: (MonadIO m, MonadBaseControl IO m, MonadLogger m)
   => Op m ()
 repeater
   = forever $ void receive

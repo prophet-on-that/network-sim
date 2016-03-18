@@ -223,7 +223,7 @@ sendOnNIC frame nic n
         mate' <- readTVar (mate p)
         case mate' of
           Nothing ->
-            throwM $ PortDisconnected (mac nic) n
+            return ()
           Just q ->
             writeTQueue (buffer' q) frame
 
