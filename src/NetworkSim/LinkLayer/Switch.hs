@@ -91,6 +91,9 @@ receive
                     logDebugP (address nic) i . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
               void $ mapConcurrently forward indices
               
+          -- Update mapping with host information.
+          atomically $ Map.insert portNum (source frame) (mapping switch)
+          
           case destination frame of
             Broadcast -> do 
               broadcast 
@@ -100,12 +103,7 @@ receive
                 then
                   return (portNum, frame)
                 else do 
-                  port <- atomically $ do 
-                    -- Update mapping with host information.
-                    Map.insert portNum (source frame) $ mapping switch
-                    -- Read destination information from mapping.
-                    Map.lookup dest $ mapping switch
-                  
+                  port <- atomically $ Map.lookup dest (mapping switch)
                   case port of
                     Nothing -> do
                       broadcast
