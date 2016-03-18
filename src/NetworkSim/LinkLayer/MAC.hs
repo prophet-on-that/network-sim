@@ -36,9 +36,12 @@ instance Show MAC where
       sep
         = ":"
 
+-- | A fresh MAC address for NICs. As only the second 3 bytes are
+-- NIC-specific, the number of unique machine-assignable addresses is
+-- 2^24.
 freshMAC :: IO MAC
 freshMAC
-  = MAC . (0xffffffffffff .&.) . fromIntegral . hashUnique <$> newUnique
+  = MAC . (0x020000000000 .|.) . (0xffffff .&.) . fromIntegral . hashUnique <$> newUnique
 
 broadcastAddr :: MAC
 broadcastAddr
