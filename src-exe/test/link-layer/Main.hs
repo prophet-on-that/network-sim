@@ -24,6 +24,7 @@ import Data.String (fromString)
 import Control.Monad.Logger
 import Control.Monad.Trans.Control
 import Control.Concurrent.STM.Lifted
+import Data.Foldable
 
 defaultMessage
   = "Hello, world!"
@@ -359,10 +360,22 @@ switchStarNetwork n = do
 switchT :: TestTree
 switchT
   = testGroup "Switch"
-      [ testCase "Replicate" . runStderrLoggingT $ do
+      [ testCase "Single message forwarded correctly" . runNoLoggingT $ do
           (switch, [node0, node1]) <- switchStarNetwork 2
           withAsync (Switch.runOp switch Switch.switch) . const $ do
             SimpleNode.runOp node0 $ SimpleNode.send defaultMessage (address . SimpleNode.interface $ node1)
             result <- payload <$> SimpleNode.runOp node1 SimpleNode.receive
             liftIO $ assertEqual "Transmitted payload does not equal message" defaultMessage result
+
+      , testCase "Broadcast always forwarded" . runNoLoggingT $ do
+           let
+             n
+               = 5
+           (switch, nodes) <- switchStarNetwork n
+           withAsync (Switch.runOp switch Switch.switch) . const $ do
+             let
+               prog = do 
+                 SimpleNode.send defaultMessage broadcastAddr
+                 replicateM_ (n - 1) $ void SimpleNode.receive
+             runConcurrently . sequenceA_ . map (Concurrently . flip SimpleNode.runOp prog) $ nodes 
       ]
