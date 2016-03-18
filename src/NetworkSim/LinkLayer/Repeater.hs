@@ -63,11 +63,7 @@ receive
           (portNum, frame) <- atomically $ receiveOnNIC nic
           let
             dest
-              = case destination frame of
-                  Broadcast ->
-                    broadcastAddr
-                  MAC a ->
-                    a
+              = destinationAddr $ destination frame
           if dest == address nic
             then
               return (portNum, frame)

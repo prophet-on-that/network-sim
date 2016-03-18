@@ -179,7 +179,7 @@ promiscuityT
             sendOnNIC frame node0 0
             sendOnNIC frame' node0 0 
           inFrame <- fmap snd . atomically $ receiveOnNIC node1
-          liftIO $ assertEqual "Expect frame with other destination to be dropped" (MAC $ address node1) (destination inFrame)
+          liftIO $ assertEqual "Expect frame with other destination to be dropped" (Unicast $ address node1) (destination inFrame)
 
       , testCase "Promiscuous NIC accepts frame with other address" . runNoLoggingT $ do
           addr <- liftIO freshMAC
@@ -219,7 +219,7 @@ promiscuityT
             sendOnNIC frame node0 0
             sendOnNIC frame' node0 0 
           inFrame <- fmap snd . atomically $ receiveOnNIC node1
-          liftIO $ assertEqual "Expect frame with other destination to be dropped" (MAC $ address node1) (destination inFrame)
+          liftIO $ assertEqual "Expect frame with other destination to be dropped" (Unicast $ address node1) (destination inFrame)
       ]
 
 disconnectT :: TestTree

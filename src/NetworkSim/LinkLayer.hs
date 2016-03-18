@@ -78,7 +78,7 @@ type OutFrame = Frame MAC
 
 data Destination
   = Broadcast
-  | MAC MAC
+  | Unicast MAC
   deriving (Eq, Show)
 
 -- | Retrieve underlying MAC address of a 'Destination'.
@@ -87,7 +87,7 @@ destinationAddr
   -> MAC
 destinationAddr Broadcast
   = broadcastAddr
-destinationAddr (MAC addr)
+destinationAddr (Unicast addr)
   = addr
 
 -- | An Ethernet frame with parsed destination field.
@@ -145,12 +145,12 @@ newNIC n promis = do
             | dest == broadcastAddr -> 
                  atomically $ writeTQueue (buffer nic) (i, frame { destination = Broadcast })
             | dest == mac nic ->
-                atomically $ writeTQueue (buffer nic) (i, frame { destination = MAC dest })
+                atomically $ writeTQueue (buffer nic) (i, frame { destination = Unicast dest })
             | otherwise -> do
                 written <- atomically $ do
                   isPromiscuous <- readTVar (promiscuity nic)
                   when isPromiscuous $
-                    writeTQueue (buffer nic) (i, frame { destination = MAC dest })
+                    writeTQueue (buffer nic) (i, frame { destination = Unicast dest })
                   return isPromiscuous
                 when (not written) $
                   logDebugP (mac nic) i $ "Dropping frame destined for " <> (T.pack . show) dest

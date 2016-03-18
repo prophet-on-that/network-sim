@@ -98,7 +98,7 @@ receive
             Broadcast -> do 
               broadcast 
               action
-            MAC dest ->
+            Unicast dest ->
               if dest == address nic
                 then
                   return (portNum, frame)
