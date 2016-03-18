@@ -411,7 +411,7 @@ switchT
             snd <$> Switch.receive
           liftIO $ assertEqual "Transmitted payload does not equal message" defaultMessage (payload frame)
 
-      , testCase "Switch recovers on host reconnect" . runStderrLoggingT $ do
+      , testCase "Switch recovers on host reconnect" . runNoLoggingT $ do
           [node0, node1, node2] <- replicateM 3 SimpleNode.new
           switch <- Switch.new 3
           let
