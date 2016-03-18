@@ -13,6 +13,7 @@ import Data.Unique
 import Data.List (intercalate)
 import GHC.Generics
 import Data.Hashable
+import Text.Printf
 
 -- | 48-bit medium access control (MAC) address.
 newtype MAC = MAC
@@ -21,17 +22,17 @@ newtype MAC = MAC
 
 instance Show MAC where
   show (mac -> mac')
-    = intercalate sep . map show $
+    = intercalate sep . map (printf "%x") $
         [ shiftR mac' 40 .&. mask
         , shiftR mac' 32 .&. mask
         , shiftR mac' 24 .&. mask
         , shiftR mac' 16 .&. mask
-        , shiftR mac' 16 .&. mask
+        , shiftR mac' 8 .&. mask
         , mac' .&. mask
         ]
     where
       mask
-        = 0xffff
+        = 0xff
       sep
         = ":"
 
