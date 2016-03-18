@@ -27,6 +27,8 @@ import Data.Monoid
 import qualified Data.Text as T
 import Control.Concurrent.STM.Lifted
 import Control.Concurrent.Async.Lifted
+import qualified Data.Vector as V
+import Data.Maybe
 
 -- | A single-interface switch, which identifies hardware addresses
 -- with its ports to more efficiently forward frames. The port will be
@@ -66,21 +68,27 @@ receive
       let
         nic
           = interface switch
-            
+      portCount <- V.length <$> atomically (portInfo nic)
+      
+      let      
         action = do 
           (portNum, frame) <- atomically $ receiveOnNIC nic
           let
             broadcast = do
               let
                 indices
-                  = filter (/= portNum) [0 .. portCount nic - 1]
+                  = filter (/= portNum) [0 .. portCount - 1]
                 dest
                   = destinationAddr . destination $ frame
                 outFrame
                   = frame { destination = dest }
                 forward i = do
-                  atomically $ sendOnNIC outFrame nic i
-                  logDebugP (address nic) i . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
+                  portInfo' <- atomically $ do
+                    sendOnNIC outFrame nic i
+                    portInfo nic
+
+                  when (fromMaybe False . fmap isConnected $ portInfo' V.!? i) $
+                    logDebugP (address nic) i . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
               void $ mapConcurrently forward indices
               
           case destination frame of

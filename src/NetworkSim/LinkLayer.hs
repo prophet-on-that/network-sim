@@ -18,11 +18,12 @@ module NetworkSim.LinkLayer
   , PortNum
   , Port ()
   , newPort
+  , PortInfo (..)
     -- * Network Interface Controller (NIC)
   , NIC ()
   , newNIC
   , address
-  , portCount
+  , portInfo
   , connectNICs
   , disconnectPort
   , sendOnNIC
@@ -100,6 +101,16 @@ data Port = Port
 newPort :: STM Port
 newPort
   = Port <$> newTVar Nothing <*> newTQueue
+
+data PortInfo = PortInfo
+  { isConnected :: !Bool
+  } deriving (Show)
+
+getPortInfo
+  :: Port
+  -> STM PortInfo
+getPortInfo
+  = fmap (PortInfo . isJust) . readTVar . mate
 
 -- | Network interface controller (NIC).
 data NIC = NIC
@@ -259,11 +270,11 @@ address
 address
   = mac
 
-portCount
+portInfo
   :: NIC
-  -> Int
-portCount
-  = V.length . ports
+  -> STM (Vector PortInfo)
+portInfo
+  = V.mapM getPortInfo . ports
 
 ---------------
 -- Utilities --
