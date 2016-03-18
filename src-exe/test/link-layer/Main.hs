@@ -7,8 +7,11 @@ module Main
   ) where
 
 import NetworkSim.LinkLayer
+import NetworkSim.LinkLayer.SimpleNode (SimpleNode)
 import qualified NetworkSim.LinkLayer.SimpleNode as SimpleNode
 import qualified NetworkSim.LinkLayer.Repeater as Repeater
+import NetworkSim.LinkLayer.Switch (Switch)
+import qualified NetworkSim.LinkLayer.Switch as Switch
 
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -35,6 +38,7 @@ main
           , disconnectT
           ]
       , repeaterT
+      , switchT
       ]
 
 connectT :: TestTree
@@ -341,3 +345,24 @@ repeaterT
           payload <$> SimpleNode.receive
       ret <- runNoLoggingT $ starNetwork n p
       assertEqual "Received payloads do not equal transmitted messages" ret (fmap (fromString . show) . V.fromList $ n - 1 : [0 .. n - 2])
+
+switchStarNetwork
+  :: (MonadIO m, MonadLogger m, MonadThrow m, MonadBaseControl IO m)
+  => Int
+  -> m (Switch, [SimpleNode])
+switchStarNetwork n = do
+  nodes <- replicateM n SimpleNode.new
+  switch <- Switch.new n
+  mapM (connectNICs (Switch.interface switch) . SimpleNode.interface) nodes
+  return (switch, nodes)
+
+switchT :: TestTree
+switchT
+  = testGroup "Switch"
+      [ testCase "Replicate" . runStderrLoggingT $ do
+          (switch, [node0, node1]) <- switchStarNetwork 2
+          withAsync (Switch.runOp switch Switch.switch) . const $ do
+            SimpleNode.runOp node0 $ SimpleNode.send defaultMessage (address . SimpleNode.interface $ node1)
+            result <- payload <$> SimpleNode.runOp node1 SimpleNode.receive
+            liftIO $ assertEqual "Transmitted payload does not equal message" defaultMessage result
+      ]
