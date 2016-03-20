@@ -15,7 +15,7 @@ library
       NetworkSim.LinkLayer                     
     , NetworkSim.LinkLayer.MAC
     , NetworkSim.LinkLayer.SimpleNode
-    , NetworkSim.LinkLayer.Repeater
+    , NetworkSim.LinkLayer.Hub
     , NetworkSim.LinkLayer.Switch
 
   build-depends:

@@ -9,7 +9,7 @@ module Main
 import NetworkSim.LinkLayer
 import NetworkSim.LinkLayer.SimpleNode (SimpleNode)
 import qualified NetworkSim.LinkLayer.SimpleNode as SimpleNode
-import qualified NetworkSim.LinkLayer.Repeater as Repeater
+import qualified NetworkSim.LinkLayer.Hub as Hub
 import NetworkSim.LinkLayer.Switch (Switch)
 import qualified NetworkSim.LinkLayer.Switch as Switch
 
@@ -38,7 +38,7 @@ main
           , promiscuityT
           , disconnectT
           ]
-      , repeaterT
+      , hubT
       , switchT
       ]
 
@@ -257,19 +257,19 @@ disconnectT
 
 starNetwork
   :: (MonadIO m, MonadLogger m, MonadBaseControl IO m, MonadCatch m)
-  => Int -- ^ Number of 'SimpleNode's connected to central repeater. Pre: >= 2.
-  -> (MAC -> Int -> Vector MAC -> SimpleNode.Op m a) -- ^ Program to run on each 'SimpleNode'. Params: repeater_addr node_number other_addrs. other_addrs is rotated such that first addr is next in sequence.
+  => Int -- ^ Number of 'SimpleNode's connected to central hub. Pre: >= 2.
+  -> (MAC -> Int -> Vector MAC -> SimpleNode.Op m a) -- ^ Program to run on each 'SimpleNode'. Params: hub_addr node_number other_addrs. other_addrs is rotated such that first addr is next in sequence.
   -> m (Vector a)
 starNetwork n p = do
   nodes <- V.replicateM n SimpleNode.new
   let
     macs
       = fmap (address . SimpleNode.interface) nodes
-  repeater <- Repeater.new n
+  hub <- Hub.new n
   let
-    repeaterMAC
-      = address . Repeater.interface $ repeater
-  mapM (connectNICs (Repeater.interface repeater) . SimpleNode.interface) nodes
+    hubMAC
+      = address . Hub.interface $ hub
+  mapM (connectNICs (Hub.interface hub) . SimpleNode.interface) nodes
   let
     nodeProgram i node = do
       let
@@ -278,41 +278,41 @@ starNetwork n p = do
         otherMACs
           = V.drop 1 after V.++ before
       SimpleNode.runOp node $
-        p repeaterMAC i otherMACs
+        p hubMAC i otherMACs
 
-    repeaterProgram
-      = Repeater.runOp repeater Repeater.repeater
-  withAsync repeaterProgram $ \_ -> 
+    hubProgram
+      = Hub.runOp hub Hub.hub
+  withAsync hubProgram $ \_ -> 
     mapConcurrently id $ V.imap nodeProgram nodes
   
-repeaterT :: TestTree
-repeaterT
-  = testGroup "Repeater"
+hubT :: TestTree
+hubT
+  = testGroup "Hub"
       [ testCase "Replicate" replicateT
       , testCase "Replicate many" replicateManyT
-      , testCase "Repeater picks up own message" . runNoLoggingT $ do
+      , testCase "Hub picks up own message" . runNoLoggingT $ do
           node0 <- newNIC 1 False
-          repeater <- Repeater.new 1
-          connectNICs node0 (Repeater.interface repeater)
+          hub <- Hub.new 1
+          connectNICs node0 (Hub.interface hub)
           let
             frame
-              = Frame (address . Repeater.interface $ repeater) (address node0) defaultMessage
+              = Frame (address . Hub.interface $ hub) (address node0) defaultMessage
           atomically $ sendOnNIC frame node0 0
-          result <- Repeater.runOp repeater $ 
-            payload . snd <$> Repeater.receive
+          result <- Hub.runOp hub $ 
+            payload . snd <$> Hub.receive
           liftIO $ assertEqual "Transmitted payload does not equal message" defaultMessage result
 
       , testCase "Message replicated several times" . runNoLoggingT $ do
           node0 <- newNIC 1 False 
           node1 <- newNIC 1 False
-          repeater0 <- Repeater.new 2
-          repeater1 <- Repeater.new 2
-          connectNICs node0 (Repeater.interface repeater0)
-          connectNICs (Repeater.interface repeater0) (Repeater.interface repeater1)
-          connectNICs (Repeater.interface repeater1) node1
+          hub0 <- Hub.new 2
+          hub1 <- Hub.new 2
+          connectNICs node0 (Hub.interface hub0)
+          connectNICs (Hub.interface hub0) (Hub.interface hub1)
+          connectNICs (Hub.interface hub1) node1
           
-          withAsync (Repeater.runOp repeater0 Repeater.repeater) . const $
-            withAsync (Repeater.runOp repeater1 Repeater.repeater) . const $ do 
+          withAsync (Hub.runOp hub0 Hub.hub) . const $
+            withAsync (Hub.runOp hub1 Hub.hub) . const $ do 
               let
                 frame
                   = Frame (address node1) (address node0) defaultMessage

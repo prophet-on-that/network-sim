@@ -1,18 +1,18 @@
--- | The 'Repeater' type is actually a link-layer switch, with zero
+-- | The 'Hub' type is actually a link-layer switch, with zero
 -- intelligence employed when forwarding packets. This module is
 -- intended to be imported qualified.
 
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
-module NetworkSim.LinkLayer.Repeater
-  ( -- * Repeater
-    Repeater (interface)
+module NetworkSim.LinkLayer.Hub
+  ( -- * Hub
+    Hub (interface)
   , new
-    -- * Repeater API
+    -- * Hub API
   , Op
   , runOp
   , receive
-  , repeater
+  , hub
   ) where
 
 import NetworkSim.LinkLayer
@@ -29,24 +29,24 @@ import Data.Maybe
 
 -- | A single-interface switch, indiscriminately copying a request
 -- on a port to every other port.
-data Repeater = Repeater
+data Hub = Hub
   { interface :: {-# UNPACK #-} !NIC
   }
 
 new
   :: (MonadIO m, MonadLogger m, MonadBaseControl IO m)
   => Int -- ^ Number of ports. Pre: positive.
-  -> m Repeater
+  -> m Hub
 new n = do
   nic <- newNIC n True
-  logInfoN $ "Creating new Repeater with address " <> (T.pack . show . address) nic
-  return $ Repeater nic
+  logInfoN $ "Creating new Hub with address " <> (T.pack . show . address) nic
+  return $ Hub nic
 
-newtype Op m a = Op (ReaderT Repeater m a)
+newtype Op m a = Op (ReaderT Hub m a)
   deriving (Functor, Applicative, Monad, MonadLogger)
 
 runOp
-  :: Repeater
+  :: Hub
   -> Op m a
   -> m a
 runOp r (Op action)
@@ -83,11 +83,11 @@ receive
               action
       action  
                       
--- | A program to run atop a 'Repeater' which will discard any
--- messages to the repeater, implicitly forwarding any frame recieved
+-- | A program to run atop a 'Hub' which will discard any
+-- messages to the hub, implicitly forwarding any frame recieved
 -- on a port to every other port.
-repeater
+hub
   :: (MonadIO m, MonadBaseControl IO m, MonadLogger m)
   => Op m ()
-repeater
+hub
   = forever $ void receive
