@@ -54,12 +54,13 @@ Test-Suite test-link-layer
     , stm-lifted
     , lifted-async
     , exceptions
-    , vector
     , tasty >= 0.10 && < 0.12
     , tasty-hunit == 0.9.*
     , mtl
     , monad-logger
     , monad-control
+    , bytestring
+    , fast-logger == 2.4.*
 
 source-repository head
   type:     git
