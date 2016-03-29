@@ -9,11 +9,7 @@ module NetworkSim.LinkLayer.Switch
   ( -- * Switch
     Switch (interface)
   , new
-    -- * Switch API
-  , Op
-  , runOp
-  , receive
-  , switch
+  , run
   ) where
 
 import NetworkSim.LinkLayer
@@ -50,77 +46,50 @@ new n = do
   logInfoN $ "Creating new Switch with address " <> (T.pack . show . address) nic
   return $ Switch nic mapping
 
-newtype Op m a = Op (ReaderT Switch m a)
-  deriving (Functor, Applicative, Monad, MonadLogger)
-
-runOp
-  :: Switch
-  -> Op m a
-  -> m a
-runOp r (Op action)
-  = runReaderT action r
-
-receive
+run
   :: (MonadIO m, MonadBaseControl IO m, MonadLogger m)
-  => Op m (PortNum, InFrame)
-receive
-  = Op . ReaderT $ \switch -> do
-      let
-        nic
-          = interface switch
-      portCount <- V.length <$> atomically (portInfo nic)
-      
-      let      
-        action = do 
-          (portNum, frame) <- atomically $ receiveOnNIC nic
-          let
-            broadcast = do
+  => Switch
+  -> m ()
+run switch = do
+  let
+    nic
+      = interface switch
+  portCount <- V.length <$> atomically (portInfo nic)
+  forever $ do 
+    (portNum, frame) <- atomically $ receiveOnNIC nic
+    let
+      broadcast = do
+        let
+          indices
+            = filter (/= portNum) [0 .. portCount - 1]
+          dest
+            = destinationAddr . destination $ frame
+          outFrame
+            = frame { destination = dest }
+          forward i = do
+            portInfo' <- atomically $ do
+              sendOnNIC outFrame nic i
+              portInfo nic
+
+            when (fromMaybe False . fmap isConnected $ portInfo' V.!? i) $
+              logDebugP (address nic) i . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
+        void $ mapConcurrently forward indices
+        
+    -- Update mapping with host information.
+    atomically $ Map.insert portNum (source frame) (mapping switch)
+    
+    case destination frame of
+      Broadcast -> do 
+        broadcast 
+      Unicast dest ->
+        when (dest /= address nic) $ do 
+          port <- atomically $ Map.lookup dest (mapping switch)
+          case port of
+            Nothing -> do
+              broadcast
+            Just port' -> do
               let
-                indices
-                  = filter (/= portNum) [0 .. portCount - 1]
-                dest
-                  = destinationAddr . destination $ frame
                 outFrame
                   = frame { destination = dest }
-                forward i = do
-                  portInfo' <- atomically $ do
-                    sendOnNIC outFrame nic i
-                    portInfo nic
-
-                  when (fromMaybe False . fmap isConnected $ portInfo' V.!? i) $
-                    logDebugP (address nic) i . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
-              void $ mapConcurrently forward indices
-              
-          -- Update mapping with host information.
-          atomically $ Map.insert portNum (source frame) (mapping switch)
-          
-          case destination frame of
-            Broadcast -> do 
-              broadcast 
-              action
-            Unicast dest ->
-              if dest == address nic
-                then
-                  return (portNum, frame)
-                else do 
-                  port <- atomically $ Map.lookup dest (mapping switch)
-                  case port of
-                    Nothing -> do
-                      broadcast
-                      action
-                    Just port' -> do
-                      let
-                        outFrame
-                          = frame { destination = dest }
-                      atomically $ sendOnNIC outFrame nic port'
-                      logDebugP (address nic) port' . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
-                      action
-      action  
-                      
--- | A program to run atop a 'Switch' which will discard any
--- messages to the switch, forwarding frames forever.
-switch
-  :: (MonadIO m, MonadBaseControl IO m, MonadLogger m)
-  => Op m ()
-switch
-  = forever $ void receive
+              atomically $ sendOnNIC outFrame nic port'
+              logDebugP (address nic) port' . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest

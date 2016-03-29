@@ -275,7 +275,7 @@ main
         , testGroup "Switch" 
             [ testCase "Single message forwarded correctly" $ do
                 (switch, [node0, node1]) <- switchStarNetwork 2
-                withAsync (Switch.runOp switch Switch.switch) . const $ do
+                withAsync (Switch.run switch) . const $ do
                   SimpleNode.runOp node0 $ SimpleNode.send defaultMessage (address . SimpleNode.interface $ node1)
                   result <- payload <$> SimpleNode.runOp node1 SimpleNode.receive
                   liftIO $ assertEqual "Transmitted payload does not equal message" defaultMessage result
@@ -285,7 +285,7 @@ main
                    n
                      = 5
                  (switch, nodes) <- switchStarNetwork n
-                 withAsync (Switch.runOp switch Switch.switch) . const $ do
+                 withAsync (Switch.run switch) . const $ do
                    let
                      prog = do 
                        SimpleNode.send defaultMessage broadcastAddr
@@ -295,7 +295,7 @@ main
             , testCase "Switch learns port of host" $ do
                 (switch, [node0, node1, node2]) <- switchStarNetwork 3
                 setPromiscuity (SimpleNode.interface node2) True
-                withAsync (Switch.runOp switch Switch.switch) . const $ do
+                withAsync (Switch.run switch) . const $ do
                   let
                     prog0 = do
                       SimpleNode.send defaultMessage (address . SimpleNode.interface $ node1)
@@ -317,13 +317,6 @@ main
                     assertEqual "Transmitted payload does not equal message" defaultMessage (payload frame0)
                     assertEqual "node2 should not receive frame destined for node0" Broadcast (destination frame2)
             
-            , testCase "Switch receives message to self" $ do
-                (switch, [node0]) <- switchStarNetwork 1
-                SimpleNode.runOp node0 $ SimpleNode.send defaultMessage (address . Switch.interface $ switch)
-                frame <- Switch.runOp switch $
-                  snd <$> Switch.receive
-                liftIO $ assertEqual "Transmitted payload does not equal message" defaultMessage (payload frame)
-            
             , testCase "Switch recovers on host reconnect" $ do
                 [node0, node1, node2] <- replicateM 3 SimpleNode.new
                 switch <- Switch.new 3
@@ -332,7 +325,7 @@ main
                     = Switch.interface switch
                 connectNICs switchNIC (SimpleNode.interface node0)
                 connectNICs switchNIC (SimpleNode.interface node1)
-                withAsync (Switch.runOp switch Switch.switch) . const $ do
+                withAsync (Switch.run switch) . const $ do
                   void $ runConcurrently $ (,) 
                     <$> ( Concurrently . SimpleNode.runOp node0 $ do 
                             SimpleNode.send defaultMessage (address . SimpleNode.interface $ node1)
