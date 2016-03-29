@@ -241,29 +241,17 @@ main
         , testGroup "Hub"
             [ testCase "Replicate" $ do
                 (hub, [node0, node1]) <- hubStarNetwork 2
-                withAsync (Hub.runOp hub Hub.hub) . const $ do
+                withAsync (Hub.run hub) . const $ do
                   SimpleNode.runOp node0 $ SimpleNode.send defaultMessage (address . SimpleNode.interface $ node1)
                   result <- payload <$> SimpleNode.runOp node1 SimpleNode.receive
                   liftIO $ assertEqual "Transmitted payload does not equal message" defaultMessage result
                 
             , testCase "Hub handles broadcast correctly" $ do 
                 (hub, [node0, node1, node2]) <- hubStarNetwork 3
-                withAsync (Hub.runOp hub Hub.hub) . const $ do
+                withAsync (Hub.run hub) . const $ do
                   SimpleNode.runOp node0 $ SimpleNode.send defaultMessage broadcastAddr
                   void $ SimpleNode.runOp node1 SimpleNode.receive
                   void $ SimpleNode.runOp node2 SimpleNode.receive
-              
-            , testCase "Hub picks up own message" $ do
-                node0 <- newNIC 1 False
-                hub <- Hub.new 1
-                connectNICs node0 (Hub.interface hub)
-                let
-                  frame
-                    = Frame (address . Hub.interface $ hub) (address node0) defaultMessage
-                atomically $ sendOnNIC frame node0 0
-                result <- Hub.runOp hub $ 
-                  payload . snd <$> Hub.receive
-                liftIO $ assertEqual "Transmitted payload does not equal message" defaultMessage result
             
             , testCase "Message replicated several times" $ do
                 node0 <- newNIC 1 False 
@@ -274,8 +262,8 @@ main
                 connectNICs (Hub.interface hub0) (Hub.interface hub1)
                 connectNICs (Hub.interface hub1) node1
                 
-                withAsync (Hub.runOp hub0 Hub.hub) . const $
-                  withAsync (Hub.runOp hub1 Hub.hub) . const $ do 
+                withAsync (Hub.run hub0) . const $
+                  withAsync (Hub.run hub1) . const $ do 
                     let
                       frame
                         = Frame (address node1) (address node0) defaultMessage

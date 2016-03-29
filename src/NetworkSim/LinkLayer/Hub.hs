@@ -8,11 +8,7 @@ module NetworkSim.LinkLayer.Hub
   ( -- * Hub
     Hub (interface)
   , new
-    -- * Hub API
-  , Op
-  , runOp
-  , receive
-  , hub
+  , run
   ) where
 
 import NetworkSim.LinkLayer
@@ -42,52 +38,30 @@ new n = do
   logInfoN $ "Creating new Hub with address " <> (T.pack . show . address) nic
   return $ Hub nic
 
-newtype Op m a = Op (ReaderT Hub m a)
-  deriving (Functor, Applicative, Monad, MonadLogger)
-
-runOp
-  :: Hub
-  -> Op m a
-  -> m a
-runOp r (Op action)
-  = runReaderT action r
-
-receive
+run
   :: (MonadIO m, MonadBaseControl IO m, MonadLogger m)
-  => Op m (PortNum, InFrame)
-receive
-  = Op . ReaderT $ \(interface -> nic) -> do
-      portCount <- V.length <$> atomically (portInfo nic)
-      let
-        action = do 
-          (portNum, frame) <- atomically $ receiveOnNIC nic
-          let
-            dest
-              = destinationAddr $ destination frame
-          if dest == address nic
-            then
-              return (portNum, frame)
-            else do
-              let
-                indices
-                  = filter (/= portNum) [0 .. portCount - 1]
-                outFrame
-                  = frame { destination = dest }
-                forward i = do
-                  portInfo' <- atomically $ do
-                    sendOnNIC outFrame nic i
-                    portInfo nic
-                  when (fromMaybe False . fmap isConnected $ portInfo' V.!? i) $
-                    logDebugP (address nic) i . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
-              void $ mapConcurrently forward indices
-              action
-      action  
-                      
--- | A program to run atop a 'Hub' which will discard any
--- messages to the hub, implicitly forwarding any frame recieved
--- on a port to every other port.
-hub
-  :: (MonadIO m, MonadBaseControl IO m, MonadLogger m)
-  => Op m ()
-hub
-  = forever $ void receive
+  => Hub
+  -> m ()
+run (interface -> nic) = do
+  portCount <- V.length <$> atomically (portInfo nic)
+  forever $ do 
+    (portNum, frame) <- atomically $ receiveOnNIC nic
+    let
+      dest
+        = destinationAddr $ destination frame
+    if dest == address nic
+      then
+        return () 
+      else do
+        let
+          indices
+            = filter (/= portNum) [0 .. portCount - 1]
+          outFrame
+            = frame { destination = dest }
+          forward i = do
+            portInfo' <- atomically $ do
+              sendOnNIC outFrame nic i
+              portInfo nic
+            when (fromMaybe False . fmap isConnected $ portInfo' V.!? i) $
+              logDebugP (address nic) i . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
+        void $ mapConcurrently forward indices
