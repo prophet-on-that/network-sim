@@ -112,18 +112,29 @@ run switch = do
       = interface switch
         
     clearExpired = do
-      logDebug' (address nic) "Clearing expired database entries.."
       now <- liftIO getCurrentTime
-      atomically $ do 
+      deleted <- atomically $ do 
         keys <- fmap (fmap fst) . ListT.toReverseList . Map.stream $ mapping switch
-        let
-          strat
-            = Focus.updateM $ \val@(_, expireTime) -> return $ do 
-                guard $ expireTime < now
-                return val
-                               
-        forM_ keys $ \key ->
-          Map.focus strat key (mapping switch)
+        fmap catMaybes . forM keys $ \key -> do
+          let
+            strat Nothing
+              = return (False, Focus.Keep)
+            strat (Just (_, expireTime))
+              = if now < expireTime
+                  then
+                    return (False, Focus.Keep)
+                  else
+                    return (True, Focus.Remove)
+          removed <- Map.focus strat key (mapping switch)
+          if removed
+            then
+              return (Just key)
+            else
+              return Nothing
+
+      forM_ deleted $ \mac ->
+        logDebug' (address nic) $ "Clearing database entry for " <> (T.pack . show) mac
+        
       liftIO $ do 
         now <- getCurrentTime
         let

@@ -27,6 +27,8 @@ import Data.Foldable
 import System.IO
 import System.Log.FastLogger (fromLogStr)
 import qualified Data.ByteString.Char8 as S8
+import Data.Time
+import Control.Concurrent (threadDelay)
 
 defaultMessage
   = "Hello, world!"
@@ -274,7 +276,7 @@ main
 
         , testGroup "Switch" 
             [ testCase "Single message forwarded correctly" $ do
-                (switch, [node0, node1]) <- switchStarNetwork 2
+                (switch, [node0, node1]) <- switchStarNetwork 2 Nothing
                 withAsync (Switch.run switch) . const $ do
                   SimpleNode.runOp node0 $ SimpleNode.send defaultMessage (address . SimpleNode.interface $ node1)
                   result <- payload <$> SimpleNode.runOp node1 SimpleNode.receive
@@ -284,7 +286,7 @@ main
                  let
                    n
                      = 5
-                 (switch, nodes) <- switchStarNetwork n
+                 (switch, nodes) <- switchStarNetwork n Nothing
                  withAsync (Switch.run switch) . const $ do
                    let
                      prog = do 
@@ -293,7 +295,7 @@ main
                    runConcurrently . sequenceA_ . map (Concurrently . flip SimpleNode.runOp prog) $ nodes
             
             , testCase "Switch learns port of host" $ do
-                (switch, [node0, node1, node2]) <- switchStarNetwork 3
+                (switch, [node0, node1, node2]) <- switchStarNetwork 3 Nothing
                 setPromiscuity (SimpleNode.interface node2) True
                 withAsync (Switch.run switch) . const $ do
                   let
@@ -350,7 +352,36 @@ main
                             SimpleNode.send defaultMessage (address . SimpleNode.interface $ node0)
                         )
                   liftIO $ assertEqual "Transmitted payload does not equal message" defaultMessage (payload frame)
-                
+
+            , testCase "Switch clears database entry after expiry time" $ do
+                let
+                  ttl
+                    = 0.001953125 -- 1/512 seconds.
+                (switch, [node0, node1, node2]) <- switchStarNetwork 3 (Just ttl)
+                setPromiscuity (SimpleNode.interface node2) True
+                withAsync (Switch.run switch) . const $ do
+                  void . runConcurrently $ (,,)
+                    <$> ( Concurrently . SimpleNode.runOp node0 $
+                            SimpleNode.send defaultMessage (address . SimpleNode.interface $ node1)
+                        )
+                    <*> ( Concurrently . SimpleNode.runOp node1 $
+                            void SimpleNode.receive
+                        )
+                    <*> ( Concurrently . SimpleNode.runOp node2 $
+                            void SimpleNode.receive
+                        )
+                liftIO . threadDelay . truncate $ ttl * 4 * 1000000
+                withAsync (Switch.run switch) . const $ do
+                  void . runConcurrently $ (,,)
+                    <$> ( Concurrently . SimpleNode.runOp node1 $
+                            SimpleNode.send defaultMessage (address . SimpleNode.interface $ node0)
+                        )
+                    <*> ( Concurrently . SimpleNode.runOp node0 $
+                            void SimpleNode.receive
+                        )
+                    <*> ( Concurrently . SimpleNode.runOp node2 $
+                            void SimpleNode.receive
+                        )
             ]
         ]
 
@@ -371,10 +402,11 @@ hubStarNetwork n = do
 switchStarNetwork
   :: (MonadIO m, MonadLogger m, MonadThrow m, MonadBaseControl IO m)
   => Int
+  -> Maybe NominalDiffTime -- ^ Switch ageing time.
   -> m (Switch, [SimpleNode])
-switchStarNetwork n = do
+switchStarNetwork n ageingTime = do
   nodes <- replicateM n SimpleNode.new
-  switch <- Switch.new n Nothing
+  switch <- Switch.new n ageingTime
   mapM (connectNICs (Switch.interface switch) . SimpleNode.interface) nodes
   return (switch, nodes)
 

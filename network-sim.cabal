@@ -64,6 +64,7 @@ Test-Suite test-link-layer
     , monad-control
     , bytestring
     , fast-logger == 2.4.*
+    , time
 
 source-repository head
   type:     git
