@@ -16,7 +16,6 @@ module NetworkSim.LinkLayer.SimpleNode
 import NetworkSim.LinkLayer
 
 import Control.Monad.Reader
-import Control.Monad.Logger
 import Control.Monad.Trans.Control
 import Control.Concurrent.STM.Lifted (STM)
 import qualified Control.Concurrent.STM.Lifted as STM
@@ -28,12 +27,15 @@ data SimpleNode = SimpleNode
   { interface :: {-# UNPACK #-} !NIC
   }
 
+deviceName
+  = "SimpleNode"
+    
 new
   :: (MonadIO m, MonadLogger m, MonadBaseControl IO m)
   => m SimpleNode
 new = do
   nic <- newNIC 1 False
-  logInfoN $ "Creating new SimpleNode with address " <> (T.pack . show . address) nic
+  announce $ "Creating new SimpleNode with address " <> (T.pack . show . address) nic
   return $ SimpleNode nic
 
 newtype Op m a = Op (ReaderT SimpleNode m a)
@@ -59,7 +61,7 @@ send payload dest
         frame
           = Frame dest (address nic) payload
       STM.atomically $ sendOnNIC frame nic 0
-      logInfo' (address nic) $ "Sending frame to " <> (T.pack . show) dest
+      record deviceName (address nic) $ "Sending frame to " <> (T.pack . show) dest
       
 receive
   :: (MonadIO m, MonadBaseControl IO m, MonadLogger m)
@@ -67,7 +69,7 @@ receive
 receive
   = Op . ReaderT $ \node -> do 
       frame <- STM.atomically $ snd <$> receiveOnNIC (interface node)
-      logInfo' (address . interface $ node) $ "Received frame from " <> (T.pack . show . source) frame
+      record deviceName (address . interface $ node) $ "Received frame from " <> (T.pack . show . source) frame
       return frame
 
 -- | Run STM actions in 'Op' programs.

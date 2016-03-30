@@ -15,7 +15,6 @@ module NetworkSim.LinkLayer
   , destinationAddr 
   , InFrame
     -- * Hardware Port 
-  , PortNum
   , Port ()
   , newPort
   , PortInfo (..)
@@ -29,14 +28,12 @@ module NetworkSim.LinkLayer
   , sendOnNIC
   , receiveOnNIC
   , setPromiscuity
-    -- * Logging Utilities
-  , logDebug'
-  , logDebugP
-  , logInfo'
-  , logInfoP
+    -- * Logging
+  , module NetworkSim.LinkLayer.Logging
   ) where
 
 import NetworkSim.LinkLayer.MAC
+import NetworkSim.LinkLayer.Logging
 
 import qualified Data.ByteString.Lazy as LB
 import Control.Concurrent.STM.Lifted
@@ -46,14 +43,11 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Control.Monad
 import Data.Maybe
-import Control.Monad.Logger
 import qualified Data.Text as T
 import Data.Monoid
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Control
 import Control.Concurrent.Lifted (fork)
-
-type PortNum = Int
 
 data LinkException
   = PortDisconnected MAC PortNum
@@ -125,6 +119,9 @@ instance Eq NIC where
   nic == nic'
     = mac nic == mac nic'
 
+deviceName
+  = "NIC"
+
 newNIC
   :: (MonadIO m, MonadBaseControl IO m, MonadLogger m)
   => Int -- ^ Number of ports. Pre: >= 1.
@@ -154,7 +151,7 @@ newNIC n promis = do
                     writeTQueue (buffer nic) (i, frame { destination = Unicast dest })
                   return isPromiscuous
                 when (not written) $
-                  logDebugP (mac nic) i $ "Dropping frame destined for " <> (T.pack . show) dest
+                  recordWithPort deviceName (mac nic) i $ "Dropping frame destined for " <> (T.pack . show) dest
 
 -- | Connect two NICs, using the first free port available for each.
 connectNICs
@@ -175,7 +172,7 @@ connectNICs nic nic' = do
         writeTVar (mate p) (Just p')
         writeTVar (mate p') (Just p)
         return (portNum, portNum')
-      logInfoN . T.pack $ "Connected " <> show (mac nic) <> "(" <> show portNum <> ") and " <> show (mac nic') <> "(" <> show portNum' <> ")"
+      announce . T.pack $ "Connected " <> show (mac nic) <> "(" <> show portNum <> ") and " <> show (mac nic') <> "(" <> show portNum' <> ")"
   where
     firstFreePort nic = do
       free <- V.filterM hasFreePort . V.indexed $ ports nic
@@ -219,7 +216,7 @@ disconnectPort nic n
               -- disconnected.
               writeTVar (mate q) Nothing
               writeTVar (mate p) Nothing
-        logInfoP (mac nic) n $ "Disconnected port"
+        recordWithPort deviceName (mac nic) n $ "Disconnected port"
 
 sendOnNIC
   :: OutFrame -- ^ The source MAC here is allowed to differ from the NIC's MAC.
@@ -261,9 +258,9 @@ setPromiscuity nic b = do
   when (old /= b) $
     if b
       then
-        logInfo' (mac nic) $ "Enabling promiscuity mode"
+        record deviceName (mac nic) $ "Enabling promiscuity mode"
       else
-        logInfo' (mac nic) $ "Disabling promiscuity mode"
+        record deviceName (mac nic) $ "Disabling promiscuity mode"
 
 address
   :: NIC
@@ -276,53 +273,3 @@ portInfo
   -> STM (Vector PortInfo)
 portInfo
   = V.mapM getPortInfo . ports
-
----------------
--- Utilities --
----------------
-
-logInfo'
-  :: MonadLogger m
-  => MAC
-  -> T.Text
-  -> m ()
-logInfo' mac 
-  = logInfoNS sourceStr
-  where
-    sourceStr
-      = T.pack . show $ mac
-
-logInfoP
-  :: MonadLogger m
-  => MAC
-  -> PortNum
-  -> T.Text
-  -> m ()
-logInfoP mac n 
-  = logInfoNS sourceStr
-  where
-    sourceStr
-      = T.pack $ show mac <> "(" <> show n <> ")"
-
-logDebug'
-  :: MonadLogger m
-  => MAC
-  -> T.Text
-  -> m ()
-logDebug' mac
-  = logDebugNS sourceStr
-  where
-    sourceStr
-      = T.pack . show $ mac
-
-logDebugP
-  :: MonadLogger m
-  => MAC
-  -> PortNum
-  -> T.Text
-  -> m ()
-logDebugP mac n 
-  = logDebugNS sourceStr
-  where
-    sourceStr
-      = T.pack $ show mac <> "(" <> show n <> ")"

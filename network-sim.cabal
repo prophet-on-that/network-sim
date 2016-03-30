@@ -13,7 +13,8 @@ cabal-version:       >=1.10
 library
   exposed-modules:
       NetworkSim.LoggingT
-    , NetworkSim.LinkLayer                     
+    , NetworkSim.LinkLayer
+    , NetworkSim.LinkLayer.Logging                     
     , NetworkSim.LinkLayer.MAC
     , NetworkSim.LinkLayer.SimpleNode
     , NetworkSim.LinkLayer.Hub
@@ -28,7 +29,6 @@ library
     , lifted-async >= 0.7 && < 0.9
     , mtl == 2.2.*
     , text == 1.2.*
-    , monad-logger == 0.3.*
     , transformers == 0.4.*
     , monad-control == 1.0.*
     , lifted-base == 0.2.*
@@ -38,6 +38,7 @@ library
     , list-t == 0.4.*
     , focus == 0.1.*
     , fast-logger == 2.4.*
+    , transformers-base == 0.4.*
 
   hs-source-dirs: src
   default-language:    Haskell2010
@@ -62,10 +63,8 @@ Test-Suite test-link-layer
     , tasty >= 0.10 && < 0.12
     , tasty-hunit == 0.9.*
     , mtl
-    , monad-logger
     , monad-control
-    , bytestring
-    , fast-logger == 2.4.*
+    , fast-logger
     , time
 
 source-repository head

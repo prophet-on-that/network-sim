@@ -15,7 +15,6 @@ import NetworkSim.LinkLayer
 
 import Control.Concurrent.Async.Lifted
 import Control.Monad.Reader
-import Control.Monad.Logger
 import Control.Monad.Trans.Control
 import Data.Monoid
 import qualified Data.Text as T
@@ -29,13 +28,16 @@ data Hub = Hub
   { interface :: {-# UNPACK #-} !NIC
   }
 
+deviceName
+  = "Hub"
+
 new
   :: (MonadIO m, MonadLogger m, MonadBaseControl IO m)
   => Int -- ^ Number of ports. Pre: positive.
   -> m Hub
 new n = do
   nic <- newNIC n True
-  logInfoN $ "Creating new Hub with address " <> (T.pack . show . address) nic
+  announce $ "Creating new Hub with address " <> (T.pack . show . address) nic
   return $ Hub nic
 
 run
@@ -63,5 +65,5 @@ run (interface -> nic) = do
               sendOnNIC outFrame nic i
               portInfo nic
             when (fromMaybe False . fmap isConnected $ portInfo' V.!? i) $
-              logDebugP (address nic) i . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
+              recordWithPort deviceName (address nic) i . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
         void $ mapConcurrently forward indices

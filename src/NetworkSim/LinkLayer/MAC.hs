@@ -5,6 +5,7 @@ module NetworkSim.LinkLayer.MAC
   ( MAC ()
   , freshMAC
   , broadcastAddr
+  , PortNum
   ) where
 
 import Data.Int
@@ -47,4 +48,7 @@ broadcastAddr :: MAC
 broadcastAddr
   = MAC 0xffffffffffff
 
-  
+-- TODO: this definition shoud be in separate module
+type PortNum = Int
+
+

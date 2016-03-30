@@ -17,7 +17,6 @@ import NetworkSim.LinkLayer
 import STMContainers.Map (Map)
 import qualified STMContainers.Map as Map
 import Control.Monad.Reader
-import Control.Monad.Logger
 import Control.Monad.Trans.Control
 import Data.Monoid
 import qualified Data.Text as T
@@ -42,6 +41,9 @@ data Switch = Switch
   , ageingTime :: !(TVar NominalDiffTime) -- ^ Time-to-live of a cache entry.
   }
 
+deviceName
+  = "Switch"
+    
 new
   :: (MonadIO m, MonadLogger m, MonadBaseControl IO m)
   => Int -- ^ Number of ports. Pre: positive.
@@ -50,7 +52,7 @@ new
 new n ageingTime = do
   nic <- newNIC n True
   mapping <- atomically Map.new
-  logInfoN $ "Creating new Switch with address " <> (T.pack . show . address) nic
+  announce $ "Creating new Switch with address " <> (T.pack . show . address) nic
   ageingTVar <- newTVarIO $ fromMaybe defaultAgeingTime ageingTime 
   return $ Switch nic mapping ageingTVar
   where
@@ -80,7 +82,7 @@ run switch = do
               portInfo nic
     
             when (fromMaybe False . fmap isConnected $ portInfo' V.!? i) $
-              logDebugP (address nic) i . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
+              recordWithPort deviceName (address nic) i . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
         void $ mapConcurrently forward indices
         
     -- Update mapping with host information.
@@ -106,7 +108,7 @@ run switch = do
                 outFrame
                   = frame { destination = dest }
               atomically $ sendOnNIC outFrame nic port'
-              logDebugP (address nic) port' . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
+              recordWithPort deviceName (address nic) port' . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
   where
     nic
       = interface switch
@@ -133,7 +135,7 @@ run switch = do
               return Nothing
 
       forM_ deleted $ \mac ->
-        logDebug' (address nic) $ "Clearing database entry for " <> (T.pack . show) mac
+        record deviceName (address nic) $ "Clearing database entry for " <> (T.pack . show) mac
         
       liftIO $ do 
         now <- getCurrentTime

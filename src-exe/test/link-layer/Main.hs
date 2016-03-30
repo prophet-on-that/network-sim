@@ -20,39 +20,36 @@ import qualified Test.Tasty.HUnit as Tasty
 import Control.Monad.Reader
 import Control.Concurrent.Async.Lifted
 import Control.Monad.Catch
-import Control.Monad.Logger
 import Control.Monad.Trans.Control
 import Control.Concurrent.STM.Lifted
 import Data.Foldable
-import System.IO
-import System.Log.FastLogger (fromLogStr)
-import qualified Data.ByteString.Char8 as S8
+import System.Log.FastLogger
 import Data.Time
 import Control.Concurrent (threadDelay)
 
 defaultMessage
   = "Hello, world!"
+
+logFile
+  = "link-layer-tests.out"
   
 main 
-  = withFile "link-layer-tests.out" WriteMode $ \hl -> do
+  = bracket (newFileLoggerSet defaultBufSize logFile) rmLoggerSet $ \loggerSet -> do 
       let
         testCase testDesc test
           = Tasty.testCase testDesc $ do 
               printDesc
-              runLoggingT test logger
-              hPutStrLn hl ""
+              runLoggingT loggerSet test
+              pushLogStrLn loggerSet ""
           where
             printDesc = do 
-              hPutStrLn hl str
-              hPutStrLn hl testDesc
-              hPutStrLn hl str
-              hPutStrLn hl ""
+              pushLogStrLn loggerSet str
+              pushLogStrLn loggerSet (toLogStr testDesc)
+              pushLogStrLn loggerSet str
+              pushLogStrLn loggerSet ""
               where
                 str
-                  = replicate (length testDesc) '#'
-                    
-            logger loc source level str
-              = S8.hPutStr hl . fromLogStr $ defaultLogStr loc source level str
+                  = toLogStr $ replicate (length testDesc) '#'
                 
       defaultMain $ testGroup "Link-layer Tests" 
         [ testGroup "NIC"
