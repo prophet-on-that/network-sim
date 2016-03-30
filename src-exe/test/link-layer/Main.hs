@@ -319,7 +319,7 @@ main
             
             , testCase "Switch recovers on host reconnect" $ do
                 [node0, node1, node2] <- replicateM 3 SimpleNode.new
-                switch <- Switch.new 3
+                switch <- Switch.new 3 Nothing
                 let
                   switchNIC
                     = Switch.interface switch
@@ -374,7 +374,7 @@ switchStarNetwork
   -> m (Switch, [SimpleNode])
 switchStarNetwork n = do
   nodes <- replicateM n SimpleNode.new
-  switch <- Switch.new n
+  switch <- Switch.new n Nothing
   mapM (connectNICs (Switch.interface switch) . SimpleNode.interface) nodes
   return (switch, nodes)
 

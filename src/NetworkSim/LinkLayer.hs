@@ -30,8 +30,9 @@ module NetworkSim.LinkLayer
   , receiveOnNIC
   , setPromiscuity
     -- * Logging Utilities
-  , logInfo'
+  , logDebug'
   , logDebugP
+  , logInfo'
   , logInfoP
   ) where
 
@@ -302,6 +303,17 @@ logInfoP mac n
   where
     sourceStr
       = T.pack $ show mac <> "(" <> show n <> ")"
+
+logDebug'
+  :: MonadLogger m
+  => MAC
+  -> T.Text
+  -> m ()
+logDebug' mac
+  = logDebugNS sourceStr
+  where
+    sourceStr
+      = T.pack . show $ mac
 
 logDebugP
   :: MonadLogger m
