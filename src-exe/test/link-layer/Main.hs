@@ -89,54 +89,54 @@ main
                       connectNICs node0 node0
                       liftIO $ assertFailure "No exception thrown"
                 ]
-            ]
             
-        , testGroup "Transmitting"
-            [ testCase "Send and receive" $ do 
-                node0 <- newNIC 1 False
-                node1 <- newNIC 1 False
-                connectNICs node0 node1
-                let
-                  frame
-                    = Frame (address node1) (address node0) defaultMessage
-                (_, payload . snd -> result) <- concurrently
-                                 (atomically $ sendOnNIC frame node0 0)
-                                 (atomically $ receiveOnNIC node1)
-                liftIO $ assertEqual "Transmitted payload does not equal message" defaultMessage result
-                
-            , testCase "Receive and reply" $ do 
-                node0 <- newNIC 1 False
-                node1 <- newNIC 1 False
-                connectNICs node0 node1
-                let
-                  addr0
-                    = address node0
-                  addr1
-                    = address node1
-                  msg0
-                    = "Hello, world!"
-                  msg1
-                    = "Hello, too!"
-                      
-                  prog0 = do
+            , testGroup "Transmitting"
+                [ testCase "Send and receive" $ do 
+                    node0 <- newNIC 1 False
+                    node1 <- newNIC 1 False
+                    connectNICs node0 node1
                     let
                       frame
-                        = Frame addr1 addr0 msg0
-                    atomically $ sendOnNIC frame node0 0
-                    fmap (payload . snd) . atomically $ receiveOnNIC node0
+                        = Frame (address node1) (address node0) defaultMessage
+                    (_, payload . snd -> result) <- concurrently
+                                     (atomically $ sendOnNIC frame node0 0)
+                                     (atomically $ receiveOnNIC node1)
+                    liftIO $ assertEqual "Transmitted payload does not equal message" defaultMessage result
                     
-                  prog1 = do
-                    msg <- fmap (payload . snd) . atomically $ receiveOnNIC node1
+                , testCase "Receive and reply" $ do 
+                    node0 <- newNIC 1 False
+                    node1 <- newNIC 1 False
+                    connectNICs node0 node1
                     let
-                      frame
-                        = Frame addr0 addr1 msg1
-                    atomically $ sendOnNIC frame node1 0
-                    return msg
-                
-                (payload0, payload1) <- concurrently prog0 prog1
-                liftIO $ do
-                  assertEqual "Payload 0 does not equal message" msg1 payload0
-                  assertEqual "Payload 1 does not equal message" msg0 payload1
+                      addr0
+                        = address node0
+                      addr1
+                        = address node1
+                      msg0
+                        = "Hello, world!"
+                      msg1
+                        = "Hello, too!"
+                          
+                      prog0 = do
+                        let
+                          frame
+                            = Frame addr1 addr0 msg0
+                        atomically $ sendOnNIC frame node0 0
+                        fmap (payload . snd) . atomically $ receiveOnNIC node0
+                        
+                      prog1 = do
+                        msg <- fmap (payload . snd) . atomically $ receiveOnNIC node1
+                        let
+                          frame
+                            = Frame addr0 addr1 msg1
+                        atomically $ sendOnNIC frame node1 0
+                        return msg
+                    
+                    (payload0, payload1) <- concurrently prog0 prog1
+                    liftIO $ do
+                      assertEqual "Payload 0 does not equal message" msg1 payload0
+                      assertEqual "Payload 1 does not equal message" msg0 payload1
+                ]
 
             , testGroup "Broadcast" 
                 [ testCase "NIC receives broadcast message" $ do
