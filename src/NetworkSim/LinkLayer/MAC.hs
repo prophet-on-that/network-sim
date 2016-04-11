@@ -8,7 +8,7 @@ module NetworkSim.LinkLayer.MAC
   , PortNum
   ) where
 
-import Data.Int
+import Data.Word
 import Data.Bits
 import Data.Unique
 import Data.List (intercalate)
@@ -18,7 +18,7 @@ import Text.Printf
 
 -- | 48-bit medium access control (MAC) address.
 newtype MAC = MAC
-  { mac :: Int64
+  { mac :: Word64
   } deriving (Eq, Generic, Hashable)
 
 instance Show MAC where
