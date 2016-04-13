@@ -19,7 +19,7 @@ import Text.Printf
 -- | 48-bit medium access control (MAC) address.
 newtype MAC = MAC
   { mac :: Word64
-  } deriving (Eq, Generic, Hashable)
+  } deriving (Eq, Ord, Generic, Hashable)
 
 instance Show MAC where
   show (mac -> mac')

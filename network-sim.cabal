@@ -19,6 +19,7 @@ library
     , NetworkSim.LinkLayer.SimpleNode
     , NetworkSim.LinkLayer.Hub
     , NetworkSim.LinkLayer.Switch
+    , NetworkSim.LinkLayer.Switch.STP
 
   build-depends:
       base
