@@ -23,6 +23,7 @@ module NetworkSim.LinkLayer
   , newNIC
   , address
   , portInfo
+  , portCount
   , connectNICs
   , disconnectPort
   , sendOnNIC
@@ -273,3 +274,9 @@ portInfo
   -> STM (Vector PortInfo)
 portInfo
   = V.mapM getPortInfo . ports
+
+portCount
+  :: NIC
+  -> Int
+portCount
+  = V.length . ports

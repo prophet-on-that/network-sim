@@ -64,14 +64,13 @@ run
   => Switch
   -> m ()
 run switch = do
-  portCount <- V.length <$> atomically (portInfo nic)
   withAsync clearExpired . const . forever $ do 
     (portNum, frame) <- atomically $ receiveOnNIC nic
     let
       broadcast = do
         let
           indices
-            = filter (/= portNum) [0 .. portCount - 1]
+            = filter (/= portNum) [0 .. portCount nic - 1]
           dest
             = destinationAddr . destination $ frame
           outFrame
@@ -95,7 +94,7 @@ run switch = do
       Map.insert (portNum, expireTime) (source frame) (mapping switch)
     
     case destination frame of
-      Broadcast -> do 
+      Broadcast -> 
         broadcast 
       Unicast dest ->
         when (dest /= address nic) $ do 

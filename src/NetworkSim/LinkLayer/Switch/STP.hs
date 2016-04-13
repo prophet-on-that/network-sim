@@ -15,6 +15,11 @@ import qualified Data.Text as T
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Control
 import Data.Monoid
+import Control.Monad
+import Control.Concurrent.Async.Lifted
+
+deviceName
+  = "STP switch"
 
 data BridgeId = BridgeId
   { priority :: {-# UNPACK #-} !Word16
@@ -94,11 +99,16 @@ data PortStatus
   | Listening
   | Learning
   | Forwarding
+  deriving (Eq)
 
 data PortData = PortData
   { status :: !PortStatus
   , configuration :: !(Maybe ConfigurationMessage)
   }
+
+newPortData :: PortData
+newPortData
+  = PortData Blocked Nothing
 
 data PortAvailability
   = Disabled
@@ -117,7 +127,7 @@ data CacheEntry = CacheEntry
 data Switch = Switch 
   { interface :: {-# UNPACK #-} !NIC
   , portAvailability :: {-# UNPACK #-} !(Vector (TVar PortAvailability))
-  , mapping :: !(Map MAC CacheEntry) 
+  , cache :: !(Map MAC CacheEntry) 
   }
 
 new
@@ -128,23 +138,90 @@ new n = do
   nic <- newNIC n True
   announce $ "Creating new STP Switch with address " <> (T.pack . show . address) nic
   portAvailability' <- atomically . V.replicateM n $ newTVar Disabled
-  mapping' <- atomically Map.new
-  return $ Switch nic portAvailability' mapping'
+  cache' <- atomically Map.new
+  return $ Switch nic portAvailability' cache'
 
 run
   :: (MonadIO m, MonadBaseControl IO m, MonadLogger m)
   => Switch
   -> m ()
-run switch = do 
+run (Switch nic portAvailability' cache') = do 
   atomically initialisePortAvailability
+  forever $ do
+    (sourcePort, frame) <- atomically $ receiveOnNIC nic
+    now <- liftIO getCurrentTime
+    atomically $ updateCache (source frame) sourcePort now
+    case destination frame of
+      Broadcast ->
+        broadcast sourcePort frame
+      Unicast dest ->
+        if dest == stpAddr
+          then
+            undefined
+          else do
+            when (dest /= address nic) $ do 
+              port <- atomically $ Map.lookup dest cache'
+              case port of
+                Nothing -> do
+                  broadcast sourcePort frame
+                Just (portNum -> port') -> do
+                  let
+                    outFrame
+                      = frame { destination = dest }
+                  atomically $ sendOnNIC outFrame nic port'
+                  recordWithPort deviceName (address nic) port' . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
   where
     initialisePortAvailability :: STM ()
     initialisePortAvailability = do
-      portInfo' <- portInfo . interface $ switch
+      portInfo' <- portInfo nic
       V.forM_ (V.indexed portInfo') $ \(i, info) ->
-        writeTVar (portAvailability switch V.! i) $
+        writeTVar (portAvailability' V.! i) $
           if isConnected info
             then
-              Available $ PortData Blocked Nothing
+              Available newPortData
             else
               Disabled
+              
+    -- Forward broadcast frame on ports in 'Forwarding' state.
+    broadcast originPort frame
+      = void $ mapConcurrently forward indices
+      where
+        indices
+          = filter (/= originPort) [0 .. portCount nic - 1]
+        dest
+          = destinationAddr . destination $ frame
+        outFrame
+          = frame { destination = dest }
+
+        -- TODO: catch exceptions when sending to transition to
+        -- disabled state, or poll portInfo vector. Exception catching
+        -- preferable allows avoiding logging.
+        forward i = do
+          sent <- atomically $ do
+            av <- readTVar $ portAvailability' V.! i
+            case av of
+              Available (status -> Forwarding) -> do
+                sendOnNIC outFrame nic i
+                return True
+              _ ->
+                return False
+    
+          when sent $
+            recordWithPort deviceName (address nic) i . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
+      
+    updateCache
+      :: MAC
+      -> PortNum
+      -> UTCTime
+      -> STM ()
+    updateCache source' portNum timestamp' = do
+      av <- readTVar $ portAvailability' V.! portNum
+      case av of
+        Available pd ->
+          if status pd == Forwarding || status pd == Learning
+            then
+              Map.insert (CacheEntry timestamp' portNum) source' cache'
+            else
+              return ()
+        _ ->
+          return ()

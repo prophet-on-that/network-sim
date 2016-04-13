@@ -6,6 +6,7 @@ module NetworkSim.LinkLayer.MAC
   , freshMAC
   , broadcastAddr
   , PortNum
+  , stpAddr
   ) where
 
 import Data.Word
@@ -51,4 +52,7 @@ broadcastAddr
 -- TODO: this definition shoud be in separate module
 type PortNum = Int
 
-
+-- | Multicast address used in the spanning tree protocol.
+stpAddr :: MAC
+stpAddr
+  = MAC 0x0180c2000000
