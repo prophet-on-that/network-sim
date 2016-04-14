@@ -16,11 +16,12 @@ import Data.List (intercalate)
 import GHC.Generics
 import Data.Hashable
 import Text.Printf
+import Data.Binary
 
 -- | 48-bit medium access control (MAC) address.
 newtype MAC = MAC
   { mac :: Word64
-  } deriving (Eq, Ord, Generic, Hashable)
+  } deriving (Eq, Ord, Generic, Hashable, Binary)
 
 instance Show MAC where
   show (mac -> mac')

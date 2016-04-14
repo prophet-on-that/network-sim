@@ -1,5 +1,8 @@
 -- | This module is intended to be imported qualified.
 
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DeriveAnyClass #-}
+
 module NetworkSim.LinkLayer.Switch.STP where
 
 import NetworkSim.LinkLayer
@@ -17,6 +20,9 @@ import Control.Monad.Trans.Control
 import Data.Monoid
 import Control.Monad
 import Control.Concurrent.Async.Lifted
+import GHC.Generics
+import Data.Binary
+import Data.Binary.Put
 
 deviceName
   = "STP switch"
@@ -24,7 +30,7 @@ deviceName
 data BridgeId = BridgeId
   { priority :: {-# UNPACK #-} !Word16
   , bridgeAddr :: {-# UNPACK #-} !MAC
-  } deriving (Eq)
+  } deriving (Eq, Show, Generic, Binary)
 
 instance Ord BridgeId where
   compare bid bid'
@@ -45,6 +51,28 @@ instance Ord BridgeId where
 data BPDU
   = TopologyChange
   | Configuration {-# UNPACK #-} !ConfigurationMessage
+  deriving (Show)
+
+instance Binary BPDU where
+  put TopologyChange = do 
+    replicateM_ 3 $ putWord8 0
+    putWord8 128
+
+  put (Configuration msg) = do
+    replicateM_ 4 $ putWord8 0
+    putLazyByteString $ encode msg
+
+  get = do
+    replicateM 3 getWord8 >>= guard . all (== 0)
+    msum
+      [ do
+          getWord8 >>= guard . (== 0)
+          Configuration <$> get
+
+      , do
+          getWord8 >>= guard . (== 128)
+          return TopologyChange
+      ]
 
 data ConfigurationMessage = ConfigurationMessage
   { topologyChange :: !Bool
@@ -57,7 +85,7 @@ data ConfigurationMessage = ConfigurationMessage
   , maxAge :: {-# UNPACK #-} !Word16
   , helloTime :: {-# UNPACK #-} !Word16
   , forwardDelay :: {-# UNPACK #-} !Word16
-  }
+  } deriving (Show, Generic, Binary)
 
 instance Eq ConfigurationMessage where
   msg == msg'
@@ -119,6 +147,9 @@ data PortAvailability
 -- switch port status to 'Disabled' and commence topology change
 -- procedure.
 
+data Notification
+  = NewMessage {-# UNPACK #-} !PortNum !BPDU
+
 data CacheEntry = CacheEntry
   { timestamp :: {-# UNPACK #-} !UTCTime -- ^ Time at which the entry was installed into the cache.
   , portNum :: {-# UNPACK #-} !PortNum
@@ -127,7 +158,8 @@ data CacheEntry = CacheEntry
 data Switch = Switch 
   { interface :: {-# UNPACK #-} !NIC
   , portAvailability :: {-# UNPACK #-} !(Vector (TVar PortAvailability))
-  , cache :: !(Map MAC CacheEntry) 
+  , cache :: !(Map MAC CacheEntry)
+  , notificationQueue :: !(TQueue Notification)
   }
 
 new
@@ -137,15 +169,16 @@ new
 new n = do
   nic <- newNIC n True
   announce $ "Creating new STP Switch with address " <> (T.pack . show . address) nic
-  portAvailability' <- atomically . V.replicateM n $ newTVar Disabled
-  cache' <- atomically Map.new
-  return $ Switch nic portAvailability' cache'
+  atomically $ Switch nic
+    <$> (V.replicateM n $ newTVar Disabled)
+    <*> Map.new
+    <*> newTQueue
 
 run
   :: (MonadIO m, MonadBaseControl IO m, MonadLogger m)
   => Switch
   -> m ()
-run (Switch nic portAvailability' cache') = do 
+run (Switch nic portAvailability' cache' notificationQueue') = do 
   atomically initialisePortAvailability
   forever $ do
     (sourcePort, frame) <- atomically $ receiveOnNIC nic
@@ -157,7 +190,11 @@ run (Switch nic portAvailability' cache') = do
       Unicast dest ->
         if dest == stpAddr
           then
-            undefined
+            case decodeOrFail (payload frame) of
+              Left (_, _, err) ->
+                recordWithPort deviceName (address nic) sourcePort . T.pack $ "Error when deserialising BPDU: " <> err
+              Right (_, _, bpdu) ->
+                atomically . writeTQueue notificationQueue' $ NewMessage sourcePort bpdu
           else do
             when (dest /= address nic) $ do 
               port <- atomically $ Map.lookup dest cache'
