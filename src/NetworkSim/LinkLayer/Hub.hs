@@ -18,7 +18,6 @@ import Control.Monad.Reader
 import Control.Monad.Trans.Control
 import Data.Monoid
 import qualified Data.Text as T
-import Control.Concurrent.STM.Lifted
 import qualified Data.Vector as V
 import Data.Maybe
 
@@ -45,9 +44,9 @@ run
   => Hub
   -> m ()
 run (interface -> nic) = do
-  portCount <- V.length <$> atomically (portInfo nic)
+  portCount <- V.length <$> atomically' (portInfo nic)
   forever $ do 
-    (portNum, frame) <- atomically $ receiveOnNIC nic
+    (portNum, frame) <- atomically' $ receiveOnNIC nic
     let
       dest
         = destinationAddr $ destination frame
@@ -61,7 +60,7 @@ run (interface -> nic) = do
           outFrame
             = frame { destination = dest }
           forward i = do
-            portInfo' <- atomically $ do
+            portInfo' <- atomically' $ do
               sendOnNIC outFrame nic i
               portInfo nic
             when (fromMaybe False . fmap isConnected $ portInfo' V.!? i) $

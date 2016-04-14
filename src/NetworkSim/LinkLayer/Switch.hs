@@ -20,7 +20,7 @@ import Control.Monad.Reader
 import Control.Monad.Trans.Control
 import Data.Monoid
 import qualified Data.Text as T
-import Control.Concurrent.STM.Lifted
+import Control.Concurrent.STM
 import Control.Concurrent.Async.Lifted
 import qualified Data.Vector as V
 import Data.Maybe
@@ -51,9 +51,9 @@ new
   -> m Switch
 new n ageingTime = do
   nic <- newNIC n True
-  mapping <- atomically Map.new
+  mapping <- atomically' Map.new
   announce $ "Creating new Switch with address " <> (T.pack . show . address) nic
-  ageingTVar <- newTVarIO $ fromMaybe defaultAgeingTime ageingTime 
+  ageingTVar <- liftIO . newTVarIO $ fromMaybe defaultAgeingTime ageingTime 
   return $ Switch nic mapping ageingTVar
   where
     defaultAgeingTime
@@ -65,7 +65,7 @@ run
   -> m ()
 run switch = do
   withAsync clearExpired . const . forever $ do 
-    (portNum, frame) <- atomically $ receiveOnNIC nic
+    (portNum, frame) <- atomically' $ receiveOnNIC nic
     let
       broadcast = do
         let
@@ -76,7 +76,7 @@ run switch = do
           outFrame
             = frame { destination = dest }
           forward i = do
-            portInfo' <- atomically $ do
+            portInfo' <- atomically' $ do
               sendOnNIC outFrame nic i
               portInfo nic
     
@@ -86,7 +86,7 @@ run switch = do
         
     -- Update mapping with host information.
     now <- liftIO getCurrentTime
-    atomically $ do
+    atomically' $ do
       ageingTime' <- readTVar $ ageingTime switch
       let
         expireTime
@@ -98,7 +98,7 @@ run switch = do
         broadcast 
       Unicast dest ->
         when (dest /= address nic) $ do 
-          port <- atomically $ Map.lookup dest (mapping switch)
+          port <- atomically' $ Map.lookup dest (mapping switch)
           case port of
             Nothing -> do
               broadcast
@@ -106,7 +106,7 @@ run switch = do
               let
                 outFrame
                   = frame { destination = dest }
-              atomically $ sendOnNIC outFrame nic port'
+              atomically' $ sendOnNIC outFrame nic port'
               recordWithPort deviceName (address nic) port' . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
   where
     nic
@@ -114,7 +114,7 @@ run switch = do
         
     clearExpired = do
       now <- liftIO getCurrentTime
-      deleted <- atomically $ do 
+      deleted <- atomically' $ do 
         keys <- fmap (fmap fst) . ListT.toReverseList . Map.stream $ mapping switch
         fmap catMaybes . forM keys $ \key -> do
           let

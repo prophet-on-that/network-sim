@@ -13,7 +13,7 @@ import qualified Data.Vector as V
 import STMContainers.Map (Map)
 import qualified STMContainers.Map as Map
 import Data.Time
-import Control.Concurrent.STM.Lifted
+import Control.Concurrent.STM
 import qualified Data.Text as T
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Control
@@ -169,7 +169,7 @@ new
 new n = do
   nic <- newNIC n True
   announce $ "Creating new STP Switch with address " <> (T.pack . show . address) nic
-  atomically $ Switch nic
+  atomically' $ Switch nic
     <$> (V.replicateM n $ newTVar Disabled)
     <*> Map.new
     <*> newTQueue
@@ -179,11 +179,11 @@ run
   => Switch
   -> m ()
 run (Switch nic portAvailability' cache' notificationQueue') = do 
-  atomically initialisePortAvailability
+  atomically' initialisePortAvailability
   forever $ do
-    (sourcePort, frame) <- atomically $ receiveOnNIC nic
+    (sourcePort, frame) <- atomically' $ receiveOnNIC nic
     now <- liftIO getCurrentTime
-    atomically $ updateCache (source frame) sourcePort now
+    atomically' $ updateCache (source frame) sourcePort now
     case destination frame of
       Broadcast ->
         broadcast sourcePort frame
@@ -194,10 +194,10 @@ run (Switch nic portAvailability' cache' notificationQueue') = do
               Left (_, _, err) ->
                 recordWithPort deviceName (address nic) sourcePort . T.pack $ "Error when deserialising BPDU: " <> err
               Right (_, _, bpdu) ->
-                atomically . writeTQueue notificationQueue' $ NewMessage sourcePort bpdu
+                atomically' . writeTQueue notificationQueue' $ NewMessage sourcePort bpdu
           else do
             when (dest /= address nic) $ do 
-              port <- atomically $ Map.lookup dest cache'
+              port <- atomically' $ Map.lookup dest cache'
               case port of
                 Nothing -> do
                   broadcast sourcePort frame
@@ -205,7 +205,7 @@ run (Switch nic portAvailability' cache' notificationQueue') = do
                   let
                     outFrame
                       = frame { destination = dest }
-                  atomically $ sendOnNIC outFrame nic port'
+                  atomically' $ sendOnNIC outFrame nic port'
                   recordWithPort deviceName (address nic) port' . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
   where
     initialisePortAvailability :: STM ()
@@ -234,7 +234,7 @@ run (Switch nic portAvailability' cache' notificationQueue') = do
         -- disabled state, or poll portInfo vector. Exception catching
         -- preferable allows avoiding logging.
         forward i = do
-          sent <- atomically $ do
+          sent <- atomically' $ do
             av <- readTVar $ portAvailability' V.! i
             case av of
               Available (status -> Forwarding) -> do

@@ -1,5 +1,6 @@
 module NetworkSim.LinkLayer.Logging
   ( DeviceName
+  , PortNum
   , announce
   , record
   , recordWithPort
@@ -17,6 +18,7 @@ import Data.Monoid
 import System.Log.FastLogger
 
 type DeviceName = T.Text
+type PortNum = Int
 
 timeFormat
   = "%Y-%m-%dT%H:%M:%S%QZ"

@@ -5,7 +5,6 @@ module NetworkSim.LinkLayer.MAC
   ( MAC ()
   , freshMAC
   , broadcastAddr
-  , PortNum
   , stpAddr
   ) where
 
@@ -49,9 +48,6 @@ freshMAC
 broadcastAddr :: MAC
 broadcastAddr
   = MAC 0xffffffffffff
-
--- TODO: this definition shoud be in separate module
-type PortNum = Int
 
 -- | Multicast address used in the spanning tree protocol.
 stpAddr :: MAC

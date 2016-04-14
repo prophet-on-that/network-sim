@@ -21,7 +21,6 @@ import Control.Monad.Reader
 import Control.Concurrent.Async.Lifted
 import Control.Monad.Catch
 import Control.Monad.Trans.Control
-import Control.Concurrent.STM.Lifted
 import Data.Foldable
 import System.Log.FastLogger
 import Data.Time
@@ -99,8 +98,8 @@ main
                       frame
                         = Frame (address node1) (address node0) defaultMessage
                     (_, payload . snd -> result) <- concurrently
-                                     (atomically $ sendOnNIC frame node0 0)
-                                     (atomically $ receiveOnNIC node1)
+                                     (atomically' $ sendOnNIC frame node0 0)
+                                     (atomically' $ receiveOnNIC node1)
                     liftIO $ assertEqual "Transmitted payload does not equal message" defaultMessage result
                     
                 , testCase "Receive and reply" $ do 
@@ -121,15 +120,15 @@ main
                         let
                           frame
                             = Frame addr1 addr0 msg0
-                        atomically $ sendOnNIC frame node0 0
-                        fmap (payload . snd) . atomically $ receiveOnNIC node0
+                        atomically' $ sendOnNIC frame node0 0
+                        fmap (payload . snd) . atomically' $ receiveOnNIC node0
                         
                       prog1 = do
-                        msg <- fmap (payload . snd) . atomically $ receiveOnNIC node1
+                        msg <- fmap (payload . snd) . atomically' $ receiveOnNIC node1
                         let
                           frame
                             = Frame addr0 addr1 msg1
-                        atomically $ sendOnNIC frame node1 0
+                        atomically' $ sendOnNIC frame node1 0
                         return msg
                     
                     (payload0, payload1) <- concurrently prog0 prog1
@@ -146,8 +145,8 @@ main
                     let
                       frame
                         = Frame broadcastAddr (address node0) defaultMessage
-                    atomically $ sendOnNIC frame node0 0
-                    inFrame <- fmap snd . atomically $ receiveOnNIC node1
+                    atomically' $ sendOnNIC frame node0 0
+                    inFrame <- fmap snd . atomically' $ receiveOnNIC node1
                     liftIO $ do
                       assertEqual "Transmitted frame is not identified as a broadcast" Broadcast (destination inFrame)
                       assertEqual "Received payload does not equal message" defaultMessage (payload inFrame)
@@ -164,10 +163,10 @@ main
                         = Frame addr (address node0) defaultMessage
                       frame'
                         = frame { destination = address node1 } 
-                    atomically $ do
+                    atomically' $ do
                       sendOnNIC frame node0 0
                       sendOnNIC frame' node0 0 
-                    inFrame <- fmap snd . atomically $ receiveOnNIC node1
+                    inFrame <- fmap snd . atomically' $ receiveOnNIC node1
                     liftIO $ assertEqual "Expect frame with other destination to be dropped" (Unicast $ address node1) (destination inFrame)
                 
                 , testCase "Promiscuous NIC accepts frame with other address" $ do
@@ -178,8 +177,8 @@ main
                     let
                       frame
                         = Frame addr (address node0) defaultMessage
-                    atomically $ sendOnNIC frame node0 0
-                    void . atomically $ receiveOnNIC node1
+                    atomically' $ sendOnNIC frame node0 0
+                    void . atomically' $ receiveOnNIC node1
                 
                 , testCase "Enabling promiscuous mode functions correctly" $ do
                     addr <- liftIO freshMAC
@@ -190,8 +189,8 @@ main
                     let
                       frame
                         = Frame addr (address node0) defaultMessage
-                    atomically $ sendOnNIC frame node0 0
-                    void . atomically $ receiveOnNIC node1
+                    atomically' $ sendOnNIC frame node0 0
+                    void . atomically' $ receiveOnNIC node1
                     
                 , testCase "Disabling promiscuous mode functions correctly" $ do
                     addr <- liftIO freshMAC
@@ -204,10 +203,10 @@ main
                         = Frame addr (address node0) defaultMessage
                       frame'
                         = frame { destination = address node1 } 
-                    atomically $ do
+                    atomically' $ do
                       sendOnNIC frame node0 0
                       sendOnNIC frame' node0 0 
-                    inFrame <- fmap snd . atomically $ receiveOnNIC node1
+                    inFrame <- fmap snd . atomically' $ receiveOnNIC node1
                     liftIO $ assertEqual "Expect frame with other destination to be dropped" (Unicast $ address node1) (destination inFrame)
                 ]
 
@@ -230,9 +229,9 @@ main
                     let
                       frame
                         = Frame (address node1) (address node0) defaultMessage
-                    atomically $ sendOnNIC frame node0 0 
+                    atomically' $ sendOnNIC frame node0 0 
                     disconnectPort node1 0
-                    result <- fmap (payload . snd) . atomically $ receiveOnNIC node1
+                    result <- fmap (payload . snd) . atomically' $ receiveOnNIC node1
                     liftIO $ assertEqual "Transmitted payload does not equal message" defaultMessage result
                 ]
             ]
@@ -266,8 +265,8 @@ main
                     let
                       frame
                         = Frame (address node1) (address node0) defaultMessage
-                    atomically $ sendOnNIC frame node0 0
-                    result <- fmap (payload . snd) . atomically $ receiveOnNIC node1
+                    atomically' $ sendOnNIC frame node0 0
+                    result <- fmap (payload . snd) . atomically' $ receiveOnNIC node1
                     liftIO $ assertEqual "Transmitted payload does not equal message" defaultMessage result
             ]
 
