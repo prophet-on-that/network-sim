@@ -30,13 +30,15 @@ module NetworkSim.LinkLayer
   , setPromiscuity
     -- * Logging
   , module NetworkSim.LinkLayer.Logging
+    -- * Utilities
+  , atomically'
   ) where
 
 import NetworkSim.LinkLayer.MAC
 import NetworkSim.LinkLayer.Logging
 
 import qualified Data.ByteString.Lazy as LB
-import Control.Concurrent.STM.Lifted
+import Control.Concurrent.STM
 import Data.Typeable
 import Control.Monad.Catch
 import Data.Vector (Vector)
@@ -129,23 +131,23 @@ newNIC
   -> m NIC
 newNIC n promis = do
   mac <- liftIO freshMAC
-  nic <- atomically $ NIC mac <$> V.replicateM n newPort <*> newTVar promis <*> newTQueue
+  nic <- atomically' $ NIC mac <$> V.replicateM n newPort <*> newTVar promis <*> newTQueue
   V.imapM_ (\i p -> void . fork $ portAction nic i p) $ ports nic
   return nic
   where
     portAction nic i p
       = forever $ do
-          frame <- atomically $ readTQueue (buffer' p)
+          frame <- atomically' $ readTQueue (buffer' p)
           let
             dest
               = destination frame
           if
             | dest == broadcastAddr -> 
-                 atomically $ writeTQueue (buffer nic) (i, frame { destination = Broadcast })
+                 atomically' $ writeTQueue (buffer nic) (i, frame { destination = Broadcast })
             | dest == mac nic ->
-                atomically $ writeTQueue (buffer nic) (i, frame { destination = Unicast dest })
+                atomically' $ writeTQueue (buffer nic) (i, frame { destination = Unicast dest })
             | otherwise -> do
-                written <- atomically $ do
+                written <- atomically' $ do
                   isPromiscuous <- readTVar (promiscuity nic)
                   when isPromiscuous $
                     writeTQueue (buffer nic) (i, frame { destination = Unicast dest })
@@ -164,7 +166,7 @@ connectNICs nic nic' = do
     then
       throwM $ ConnectToSelf (mac nic)
     else do
-      (portNum, portNum') <- atomically $ do 
+      (portNum, portNum') <- atomically' $ do 
         (portNum, p) <- firstFreePort nic
         (portNum', p') <- firstFreePort nic'
         checkDisconnected nic portNum p
@@ -206,7 +208,7 @@ disconnectPort nic n
         -- TODO: alert user to index out of bounds error?
         return ()
       Just p -> do
-        atomically $ do 
+        atomically' $ do 
           mate' <- readTVar (mate p)
           case mate' of
             Nothing ->
@@ -254,7 +256,7 @@ setPromiscuity
   -> Bool
   -> m ()
 setPromiscuity nic b = do
-  old <- atomically $ swapTVar (promiscuity nic) b
+  old <- atomically' $ swapTVar (promiscuity nic) b
   when (old /= b) $
     if b
       then
@@ -273,3 +275,11 @@ portInfo
   -> STM (Vector PortInfo)
 portInfo
   = V.mapM getPortInfo . ports
+
+-- | @ atomically' = liftIO . atomically @
+atomically'
+  :: MonadIO m
+  => STM a
+  -> m a 
+atomically'
+  = liftIO . atomically

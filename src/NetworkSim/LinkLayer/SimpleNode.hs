@@ -17,8 +17,7 @@ import NetworkSim.LinkLayer
 
 import Control.Monad.Reader
 import Control.Monad.Trans.Control
-import Control.Concurrent.STM.Lifted (STM)
-import qualified Control.Concurrent.STM.Lifted as STM
+import Control.Concurrent.STM (STM)
 import Data.Monoid
 import qualified Data.Text as T
 
@@ -60,7 +59,7 @@ send payload dest
       let
         frame
           = Frame dest (address nic) payload
-      STM.atomically $ sendOnNIC frame nic 0
+      atomically' $ sendOnNIC frame nic 0
       record deviceName (address nic) $ "Sending frame to " <> (T.pack . show) dest
       
 receive
@@ -68,7 +67,7 @@ receive
   => Op m InFrame
 receive
   = Op . ReaderT $ \node -> do 
-      frame <- STM.atomically $ snd <$> receiveOnNIC (interface node)
+      frame <- atomically' $ snd <$> receiveOnNIC (interface node)
       record deviceName (address . interface $ node) $ "Received frame from " <> (T.pack . show . source) frame
       return frame
 
@@ -78,4 +77,4 @@ atomically
   => STM a
   -> Op m a
 atomically
-  = Op . STM.atomically 
+  = Op . atomically'

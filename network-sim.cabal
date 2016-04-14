@@ -23,7 +23,7 @@ library
   build-depends:
       base
     , bytestring == 0.10.*
-    , stm-lifted == 0.1.*
+    , stm == 2.4.*
     , exceptions == 0.8.*
     , vector == 0.11.*
     , lifted-async >= 0.7 && < 0.9
@@ -57,7 +57,7 @@ Test-Suite test-link-layer
   build-depends:
       base 
     , network-sim
-    , stm-lifted
+    , stm
     , lifted-async
     , exceptions
     , tasty >= 0.10 && < 0.12
