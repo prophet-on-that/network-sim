@@ -29,6 +29,7 @@ import qualified ListT
 import qualified Focus
 import Data.Fixed (mod')
 import Control.Concurrent (threadDelay)
+import Data.Word
 
 -- | A single-interface switch, which identifies hardware addresses
 -- with its ports to more efficiently forward frames. The port will be
@@ -46,7 +47,7 @@ deviceName
     
 new
   :: (MonadIO m, MonadLogger m, MonadBaseControl IO m)
-  => Int -- ^ Number of ports. Pre: positive.
+  => Word16 -- ^ Number of ports. Pre: positive.
   -> Maybe NominalDiffTime -- ^ Optional 'ageingTime', with default 5 seconds.
   -> m Switch
 new n ageingTime = do

@@ -20,6 +20,7 @@ import Data.Monoid
 import qualified Data.Text as T
 import qualified Data.Vector as V
 import Data.Maybe
+import Data.Word
 
 -- | A single-interface switch, indiscriminately copying a request
 -- on a port to every other port.
@@ -32,7 +33,7 @@ deviceName
 
 new
   :: (MonadIO m, MonadLogger m, MonadBaseControl IO m)
-  => Int -- ^ Number of ports. Pre: positive.
+  => Word16 -- ^ Number of ports. Pre: positive.
   -> m Hub
 new n = do
   nic <- newNIC n True

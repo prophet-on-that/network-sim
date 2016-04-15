@@ -128,12 +128,12 @@ deviceName
 
 newNIC
   :: (MonadIO m, MonadBaseControl IO m, MonadLogger m)
-  => Int -- ^ Number of ports. Pre: >= 1.
+  => Word16 -- ^ Number of ports. Pre: >= 1.
   -> Bool -- ^ Initial promiscuity setting.
   -> m NIC
 newNIC n promis = do
   mac <- liftIO freshMAC
-  nic <- atomically' $ NIC mac <$> V.replicateM n newPort <*> newTVar promis <*> newTQueue
+  nic <- atomically' $ NIC mac <$> V.replicateM (fromIntegral n) newPort <*> newTVar promis <*> newTQueue
   V.imapM_ (\(fromIntegral -> i) p -> void . fork $ portAction nic i p) $ ports nic
   return nic
   where
