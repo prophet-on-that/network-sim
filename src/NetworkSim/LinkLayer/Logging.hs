@@ -16,9 +16,10 @@ import Data.Time
 import Control.Monad.IO.Class
 import Data.Monoid
 import System.Log.FastLogger
+import Data.Word
 
 type DeviceName = T.Text
-type PortNum = Int
+type PortNum = Word16
 
 timeFormat
   = "%Y-%m-%dT%H:%M:%S%QZ"

@@ -64,14 +64,13 @@ run
   => Switch
   -> m ()
 run switch = do
-  portCount <- V.length <$> atomically' (portInfo nic)
   withAsync clearExpired . const . forever $ do 
     (portNum, frame) <- atomically' $ receiveOnNIC nic
     let
       broadcast = do
         let
           indices
-            = filter (/= portNum) [0 .. portCount - 1]
+            = filter (/= portNum) [0 .. portCount nic - 1]
           dest
             = destinationAddr . destination $ frame
           outFrame
@@ -81,7 +80,7 @@ run switch = do
               sendOnNIC outFrame nic i
               portInfo nic
     
-            when (fromMaybe False . fmap isConnected $ portInfo' V.!? i) $
+            when (fromMaybe False . fmap isConnected $ portInfo' V.!? (fromIntegral i)) $
               recordWithPort deviceName (address nic) i . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
         void $ mapConcurrently forward indices
         
