@@ -80,7 +80,7 @@ run switch = do
               sendOnNIC outFrame nic i
               portInfo nic
     
-            when (fromMaybe False . fmap isConnected $ portInfo' V.!? i) $
+            when (fromMaybe False . fmap isConnected $ portInfo' V.!? (fromIntegral i)) $
               recordWithPort deviceName (address nic) i . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
         void $ mapConcurrently forward indices
         

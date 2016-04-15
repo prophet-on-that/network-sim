@@ -211,7 +211,7 @@ run (Switch nic portAvailability' cache' notificationQueue') = do
     initialisePortAvailability :: STM ()
     initialisePortAvailability = do
       portInfo' <- portInfo nic
-      V.forM_ (V.indexed portInfo') $ \(i, info) ->
+      V.forM_ (V.indexed portInfo') $ \(fromIntegral -> i, info) ->
         writeTVar (portAvailability' V.! i) $
           if isConnected info
             then
@@ -235,7 +235,7 @@ run (Switch nic portAvailability' cache' notificationQueue') = do
         -- preferable allows avoiding logging.
         forward i = do
           sent <- atomically' $ do
-            av <- readTVar $ portAvailability' V.! i
+            av <- readTVar $ portAvailability' V.! (fromIntegral i)
             case av of
               Available (status -> Forwarding) -> do
                 sendOnNIC outFrame nic i
@@ -252,7 +252,7 @@ run (Switch nic portAvailability' cache' notificationQueue') = do
       -> UTCTime
       -> STM ()
     updateCache source' portNum timestamp' = do
-      av <- readTVar $ portAvailability' V.! portNum
+      av <- readTVar $ portAvailability' V.! (fromIntegral portNum)
       case av of
         Available pd ->
           if status pd == Forwarding || status pd == Learning

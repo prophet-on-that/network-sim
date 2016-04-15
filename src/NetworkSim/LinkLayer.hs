@@ -22,8 +22,8 @@ module NetworkSim.LinkLayer
   , NIC ()
   , newNIC
   , address
-  , portInfo
   , portCount
+  , portInfo
   , connectNICs
   , disconnectPort
   , sendOnNIC
@@ -51,6 +51,7 @@ import Data.Monoid
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Control
 import Control.Concurrent.Lifted (fork)
+import Data.Word
 
 data LinkException
   = PortDisconnected MAC PortNum
@@ -133,7 +134,7 @@ newNIC
 newNIC n promis = do
   mac <- liftIO freshMAC
   nic <- atomically' $ NIC mac <$> V.replicateM n newPort <*> newTVar promis <*> newTQueue
-  V.imapM_ (\i p -> void . fork $ portAction nic i p) $ ports nic
+  V.imapM_ (\(fromIntegral -> i) p -> void . fork $ portAction nic i p) $ ports nic
   return nic
   where
     portAction nic i p
@@ -168,8 +169,8 @@ connectNICs nic nic' = do
       throwM $ ConnectToSelf (mac nic)
     else do
       (portNum, portNum') <- atomically' $ do 
-        (portNum, p) <- firstFreePort nic
-        (portNum', p') <- firstFreePort nic'
+        (fromIntegral -> portNum, p) <- firstFreePort nic
+        (fromIntegral -> portNum', p') <- firstFreePort nic'
         checkDisconnected nic portNum p
         checkDisconnected nic' portNum' p'
         writeTVar (mate p) (Just p')
@@ -204,7 +205,7 @@ disconnectPort
   -> PortNum
   -> m ()
 disconnectPort nic n
-  = case ports nic V.!? n of
+  = case ports nic V.!? (fromIntegral n) of
       Nothing ->
         -- TODO: alert user to index out of bounds error?
         return ()
@@ -227,7 +228,7 @@ sendOnNIC
   -> PortNum
   -> STM ()
 sendOnNIC frame nic n 
-  = case ports nic V.!? n of
+  = case ports nic V.!? (fromIntegral n) of
       Nothing -> 
         -- TODO: alert user to index out of bounds error?
         return ()
@@ -277,12 +278,6 @@ portInfo
 portInfo
   = V.mapM getPortInfo . ports
 
-portCount
-  :: NIC
-  -> Int
-portCount
-  = V.length . ports
-
 -- | @ atomically' = liftIO . atomically @
 atomically'
   :: MonadIO m
@@ -290,3 +285,9 @@ atomically'
   -> m a 
 atomically'
   = liftIO . atomically
+
+portCount
+  :: NIC
+  -> Word16
+portCount
+  = fromIntegral . V.length . ports

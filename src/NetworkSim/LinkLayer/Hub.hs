@@ -44,7 +44,6 @@ run
   => Hub
   -> m ()
 run (interface -> nic) = do
-  portCount <- V.length <$> atomically' (portInfo nic)
   forever $ do 
     (portNum, frame) <- atomically' $ receiveOnNIC nic
     let
@@ -56,13 +55,13 @@ run (interface -> nic) = do
       else do
         let
           indices
-            = filter (/= portNum) [0 .. portCount - 1]
+            = filter (/= portNum) [0 .. portCount nic - 1]
           outFrame
             = frame { destination = dest }
           forward i = do
             portInfo' <- atomically' $ do
               sendOnNIC outFrame nic i
               portInfo nic
-            when (fromMaybe False . fmap isConnected $ portInfo' V.!? i) $
+            when (fromMaybe False . fmap isConnected $ portInfo' V.!? (fromIntegral i)) $
               recordWithPort deviceName (address nic) i . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
         void $ mapConcurrently forward indices
