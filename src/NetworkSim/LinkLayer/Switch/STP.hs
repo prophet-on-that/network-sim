@@ -238,6 +238,22 @@ run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus')
                   atomically' $ sendOnNIC outFrame nic port'
                   recordWithPort deviceName (address nic) port' . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
   where
+    -- A wrapper around 'sendOnNIC' that ensure the port is in the
+    -- 'Forwarding' state before sending. The return value indicates
+    -- if the value was actually send.
+    sendOnPort
+      :: OutFrame
+      -> PortNum
+      -> STM Bool
+    sendOnPort frame i = do
+      av <- readTVar $ portAvailability' V.! (fromIntegral i)
+      case av of
+        Available (status -> Forwarding) -> do
+          sendOnNIC frame nic i
+          return True
+        _ ->
+          return False
+    
     initialise :: STM ()
     initialise = do
       initialisePortAvailability
@@ -268,15 +284,7 @@ run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus')
         -- disabled state, or poll portInfo vector. Exception catching
         -- preferable allows avoiding logging.
         forward i = do
-          sent <- atomically' $ do
-            av <- readTVar $ portAvailability' V.! (fromIntegral i)
-            case av of
-              Available (status -> Forwarding) -> do
-                sendOnNIC outFrame nic i
-                return True
-              _ ->
-                return False
-    
+          sent <- atomically' $ sendOnPort outFrame i
           when sent $
             recordWithPort deviceName (address nic) i . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
       
@@ -325,37 +333,60 @@ run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus')
                           else
                             return False
                             
-              when bestMessageUpdated $ do
-                let
-                  getBestMessageByPort msgs (fromIntegral -> portNum') tVar = do 
-                    pa <- readTVar tVar
-                    case pa of
-                      Available (configuration -> Just msg) ->
-                        return ((portNum', msg) : msgs)
-                      _ ->
-                        return msgs
-                bestMessages <- atomically' $ V.ifoldM getBestMessageByPort [] portAvailability'
-                if null bestMessages
-                  then do
-                    atomically' $ writeTVar switchStatus' RootSwitch
-                  else do 
-                    let
-                      (rootPort', bestMsg)
-                        = minimumBy (comparing snd) bestMessages
-                      rootId'
-                        = rootId bestMsg
-                    if iden' > rootId'
-                      then do
-                        atomically' $ writeTVar switchStatus' RootSwitch
-                      else do
-                        let
-                          cost'
-                            = 1 + rootPathCost bestMsg
-                          dummyMessage
-                            = ConfigurationMessage False False rootId' cost' iden' 0 0 0 0 0
-                          designatedPorts'
-                            = Set.fromList . map fst . filter ((dummyMessage >) . snd) $ bestMessages
-                          nonRootSwitch
-                            = NonRootSwitch' rootPort' rootId' designatedPorts' cost'
-                        atomically' . writeTVar switchStatus' $ NonRootSwitch nonRootSwitch
-              undefined          
+              when bestMessageUpdated $ atomically' recompute
+
+              atomically' $ do 
+                ss <- readTVar switchStatus'
+                case ss of
+                  RootSwitch ->
+                    -- TODO: further behaviour may be required here.
+                    return ()
+                  NonRootSwitch info ->
+                    if rootId msg == rootPortId info
+                      then
+                        -- TODO: consider use of 'mapConcurrently' here.
+                        forM_ (designatedPorts info) $ \i -> do
+                          let
+                            configurationMsg
+                              = ConfigurationMessage False False (rootPortId info) (cost info) iden' i 0 0 0 0
+                            frame
+                              = Frame stpAddr (switchAddr iden') $ encode configurationMsg
+                          void $ sendOnPort frame i 
+                      else
+                        return ()
+      where
+        recompute :: STM ()
+        recompute = do 
+          bestMessages <- V.ifoldM getBestMessageByPort [] portAvailability'
+          if null bestMessages
+            then do
+              writeTVar switchStatus' RootSwitch
+            else do 
+              let
+                (rootPort', bestMsg)
+                  = minimumBy (comparing snd) bestMessages
+                rootId'
+                  = rootId bestMsg
+              if iden' > rootId'
+                then do
+                  writeTVar switchStatus' RootSwitch
+                else do
+                  let
+                    cost'
+                      = 1 + rootPathCost bestMsg
+                    dummyMessage
+                      = ConfigurationMessage False False rootId' cost' iden' 0 0 0 0 0
+                    designatedPorts'
+                      = Set.fromList . map fst . filter ((dummyMessage >) . snd) $ bestMessages
+                    nonRootSwitch
+                      = NonRootSwitch' rootPort' rootId' designatedPorts' cost'
+                  writeTVar switchStatus' $ NonRootSwitch nonRootSwitch
+          where
+            getBestMessageByPort msgs (fromIntegral -> portNum') tVar = do 
+              pa <- readTVar tVar
+              case pa of
+                Available (configuration -> Just msg) ->
+                  return ((portNum', msg) : msgs)
+                _ ->
+                  return msgs
+            
