@@ -29,6 +29,7 @@ import Data.Foldable
 import Data.Ord
 import Data.Fixed
 import Control.Concurrent (threadDelay)
+import Data.List (intercalate)
 
 deviceName
   = "STP switch"
@@ -139,12 +140,12 @@ data PortStatus
   | Listening
   | Learning
   | Forwarding
-  deriving (Eq)
+  deriving (Eq, Show)
 
 data PortData = PortData
   { status :: !PortStatus
   , configuration :: !(Maybe ConfigurationMessage)
-  }
+  } deriving (Show)
 
 newPortData :: PortData
 newPortData
@@ -153,6 +154,7 @@ newPortData
 data PortAvailability
   = Disabled
   | Available {-# UNPACK #-} !PortData
+  deriving (Show)
 
 data SwitchStatus
   = RootSwitch
@@ -321,22 +323,24 @@ run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus' 
           notification' <- atomically' $ readTQueue notificationQueue'
           case notification' of
             Hello -> do
-              sent <- atomically' $ do 
-                ss <- readTVar switchStatus'
-                case ss of
-                  RootSwitch -> do 
-                    forM_ [0 .. portCount' - 1] $ \i -> do
-                      let
-                        configurationMsg
-                          = ConfigurationMessage False False iden' 0 iden' i 0 0 0 0
-                        frame
-                          = Frame stpAddr (switchAddr iden') $ encode configurationMsg
-                      void $ sendOnPort frame i
-                    return True
-                  _ ->
-                    return False
-              when sent $
-                record deviceName (switchAddr iden') $ "Sending Hello message on all (available) ports."
+              ss <- atomically' $ readTVar switchStatus'
+              case ss of
+                RootSwitch -> do
+                  sendStatus <- forConcurrently [0 .. portCount' - 1] $ \i -> do
+                    let
+                      configurationMsg
+                        = ConfigurationMessage False False iden' 0 iden' i 0 0 0 0
+                      frame
+                        = Frame stpAddr (switchAddr iden') $ encode configurationMsg
+                    sent <- atomically' $ sendOnPort frame i
+                    return (i, sent)
+                  let
+                    portsSentOn
+                      = map fst . filter snd $ sendStatus
+                  when (not . null $ portsSentOn) $ do 
+                    record deviceName (switchAddr iden') . T.pack $ "Sent Hello message on ports " <> (intercalate ", " . map show) portsSentOn
+                _ ->
+                  return ()
               
             NewMessage sourcePort bpdu -> 
               case bpdu of
