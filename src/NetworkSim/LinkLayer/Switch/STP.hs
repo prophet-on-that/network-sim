@@ -208,7 +208,7 @@ new n prio = do
     <*> return switchId
     <*> newTVar RootSwitch
     <*> newTVar Nothing
-    <*> newTVar 1
+    <*> newTVar 512
 
 -- | The status of the 'Switch' is re-initialised with each 'run'.
 run
@@ -246,6 +246,9 @@ run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus' 
                     atomically' $ sendOnNIC outFrame nic port'
                     recordWithPort deviceName (address nic) port' . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
   where
+    portCount'
+      = portCount nic
+        
     -- A wrapper around 'sendOnNIC' that ensure the port is in the
     -- 'Forwarding' state before sending. The return value indicates
     -- if the value was actually send.
@@ -282,7 +285,7 @@ run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus' 
       = void $ mapConcurrently forward indices
       where
         indices
-          = filter (/= originPort) [0 .. portCount nic - 1]
+          = filter (/= originPort) [0 .. portCount' - 1]
         dest
           = destinationAddr . destination $ frame
         outFrame
@@ -315,53 +318,73 @@ run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus' 
 
     stpThread 
       = forever $ do
-          NewMessage sourcePort bpdu <- atomically' $ readTQueue notificationQueue'
-          case bpdu of
-            TopologyChange ->
-              undefined
-            Configuration msg -> do
-              bestMessageUpdated <- atomically' $ do
-                let
-                  tVar
-                    = portAvailability' V.! (fromIntegral sourcePort)
-                pa <- readTVar tVar
-                case pa of
-                  Disabled ->
-                    return False
-                  Available portData' -> 
-                    case configuration portData' of
-                      Nothing -> do 
-                        writeTVar tVar . Available $ portData' { configuration = Just msg }
-                        return True
-                      Just msg' ->
-                        if msg > msg'
-                          then do
-                            writeTVar tVar . Available $ portData' { configuration = Just msg }
-                            return True
-                          else
-                            return False
-                            
-              when bestMessageUpdated $ atomically' recompute
-
-              atomically' $ do 
+          notification' <- atomically' $ readTQueue notificationQueue'
+          case notification' of
+            Hello -> do
+              sent <- atomically' $ do 
                 ss <- readTVar switchStatus'
                 case ss of
-                  RootSwitch ->
-                    -- TODO: further behaviour may be required here.
-                    return ()
-                  NonRootSwitch info ->
-                    if rootId msg == rootPortId info
-                      then
-                        -- TODO: consider use of 'mapConcurrently' here.
-                        forM_ (designatedPorts info) $ \i -> do
-                          let
-                            configurationMsg
-                              = ConfigurationMessage False False (rootPortId info) (cost info) iden' i 0 0 0 0
-                            frame
-                              = Frame stpAddr (switchAddr iden') $ encode configurationMsg
-                          void $ sendOnPort frame i 
-                      else
+                  RootSwitch -> do 
+                    forM_ [0 .. portCount' - 1] $ \i -> do
+                      let
+                        configurationMsg
+                          = ConfigurationMessage False False iden' 0 iden' i 0 0 0 0
+                        frame
+                          = Frame stpAddr (switchAddr iden') $ encode configurationMsg
+                      void $ sendOnPort frame i
+                    return True
+                  _ ->
+                    return False
+              when sent $
+                record deviceName (switchAddr iden') $ "Sending Hello message on all (available) ports."
+              
+            NewMessage sourcePort bpdu -> 
+              case bpdu of
+                TopologyChange ->
+                  undefined
+                Configuration msg -> do
+                  bestMessageUpdated <- atomically' $ do
+                    let
+                      tVar
+                        = portAvailability' V.! (fromIntegral sourcePort)
+                    pa <- readTVar tVar
+                    case pa of
+                      Disabled ->
+                        return False
+                      Available portData' -> 
+                        case configuration portData' of
+                          Nothing -> do 
+                            writeTVar tVar . Available $ portData' { configuration = Just msg }
+                            return True
+                          Just msg' ->
+                            if msg > msg'
+                              then do
+                                writeTVar tVar . Available $ portData' { configuration = Just msg }
+                                return True
+                              else
+                                return False
+                                
+                  when bestMessageUpdated $ atomically' recompute
+              
+                  atomically' $ do 
+                    ss <- readTVar switchStatus'
+                    case ss of
+                      RootSwitch ->
+                        -- TODO: further behaviour may be required here.
                         return ()
+                      NonRootSwitch info ->
+                        if rootId msg == rootPortId info
+                          then
+                            -- TODO: consider use of 'mapConcurrently' here.
+                            forM_ (designatedPorts info) $ \i -> do
+                              let
+                                configurationMsg
+                                  = ConfigurationMessage False False (rootPortId info) (cost info) iden' i 0 0 0 0
+                                frame
+                                  = Frame stpAddr (switchAddr iden') $ encode configurationMsg
+                              void $ sendOnPort frame i 
+                          else
+                            return ()
       where
         recompute :: STM ()
         recompute = do 
@@ -398,18 +421,19 @@ run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus' 
                 _ ->
                   return msgs
 
-    timer = forever $ do
-      now <- liftIO getCurrentTime
-      atomically' $ do 
-        len <- readTVar switchHelloTime'
-        t <- readTVar lastHello'
-        let
-          helloDue
-            = maybe False ((now >=) . addUTCTime (word16ToNominalDiffTime len)) t
-        when helloDue $ do 
-          writeTQueue notificationQueue' Hello
-          writeTVar lastHello' $ Just now
-      sleep
+    timer
+      = forever $ do
+          now <- liftIO getCurrentTime
+          atomically' $ do 
+            len <- readTVar switchHelloTime'
+            t <- readTVar lastHello'
+            let
+              helloDue
+                = maybe True ((now >=) . addUTCTime (word16ToNominalDiffTime len)) t
+            when helloDue $ do 
+              writeTQueue notificationQueue' Hello
+              writeTVar lastHello' $ Just now
+          sleep
       where
         sleep 
           = liftIO $ do 
