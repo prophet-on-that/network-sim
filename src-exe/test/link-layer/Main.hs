@@ -25,6 +25,7 @@ import Data.Foldable
 import System.Log.FastLogger
 import Data.Time
 import Control.Concurrent (threadDelay)
+import Data.Word
 
 defaultMessage
   = "Hello, world!"
@@ -287,7 +288,7 @@ main
                    let
                      prog = do 
                        SimpleNode.send defaultMessage broadcastAddr
-                       replicateM_ (n - 1) $ void SimpleNode.receive
+                       replicateM_ (fromIntegral n - 1) $ void SimpleNode.receive
                    runConcurrently . sequenceA_ . map (Concurrently . flip SimpleNode.runOp prog) $ nodes
             
             , testCase "Switch learns port of host" $ do
@@ -387,21 +388,21 @@ main
 
 hubStarNetwork
   :: (MonadIO m, MonadLogger m, MonadThrow m, MonadBaseControl IO m)
-  => Int
+  => Word16
   -> m (Hub, [SimpleNode])
 hubStarNetwork n = do
-  nodes <- replicateM n SimpleNode.new
+  nodes <- replicateM (fromIntegral n) SimpleNode.new
   hub <- Hub.new n
   mapM (connectNICs (Hub.interface hub) . SimpleNode.interface) nodes
   return (hub, nodes)
   
 switchStarNetwork
   :: (MonadIO m, MonadLogger m, MonadThrow m, MonadBaseControl IO m)
-  => Int
+  => Word16
   -> Maybe NominalDiffTime -- ^ Switch ageing time.
   -> m (Switch, [SimpleNode])
 switchStarNetwork n ageingTime = do
-  nodes <- replicateM n SimpleNode.new
+  nodes <- replicateM (fromIntegral n) SimpleNode.new
   switch <- Switch.new n ageingTime
   mapM (connectNICs (Switch.interface switch) . SimpleNode.interface) nodes
   return (switch, nodes)

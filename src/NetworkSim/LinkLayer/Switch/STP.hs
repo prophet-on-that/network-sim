@@ -23,24 +23,34 @@ import Control.Concurrent.Async.Lifted
 import GHC.Generics
 import Data.Binary
 import Data.Binary.Put
+import Data.Set (Set)
+import qualified Data.Set as Set
+import Data.Foldable
+import Data.Ord
 
 deviceName
   = "STP switch"
 
-data BridgeId = BridgeId
-  { priority :: {-# UNPACK #-} !Word16
-  , bridgeAddr :: {-# UNPACK #-} !MAC
+type Priority = Word16
+
+defaultPriority :: Priority
+defaultPriority
+  = 80
+
+data SwitchId = SwitchId
+  { priority :: {-# UNPACK #-} !Priority
+  , switchAddr :: {-# UNPACK #-} !MAC
   } deriving (Eq, Show, Generic, Binary)
 
-instance Ord BridgeId where
-  compare bid bid'
-    = case compare (priority bid) (priority bid') of
+instance Ord SwitchId where
+  compare sid sid'
+    = case compare (priority sid) (priority sid') of
         GT ->
           LT
         LT ->
           GT
         EQ ->
-          case compare (bridgeAddr bid) (bridgeAddr bid') of
+          case compare (switchAddr sid) (switchAddr sid') of
             GT ->
               LT
             LT ->
@@ -77,10 +87,10 @@ instance Binary BPDU where
 data ConfigurationMessage = ConfigurationMessage
   { topologyChange :: !Bool
   , topologyChangeAck :: !Bool
-  , rootId :: {-# UNPACK #-} !BridgeId 
+  , rootId :: {-# UNPACK #-} !SwitchId 
   , rootPathCost :: {-# UNPACK #-} !Word32
-  , bridgeId :: {-# UNPACK #-} !BridgeId
-  , portId :: {-# UNPACK #-} !Word16
+  , switchId :: {-# UNPACK #-} !SwitchId
+  , portId :: {-# UNPACK #-} !PortNum
   , messageAge :: {-# UNPACK #-} !Word16
   , maxAge :: {-# UNPACK #-} !Word16
   , helloTime :: {-# UNPACK #-} !Word16
@@ -91,7 +101,7 @@ instance Eq ConfigurationMessage where
   msg == msg'
     = rootId msg == rootId msg' &&
       rootPathCost msg == rootPathCost msg' &&
-      bridgeId msg == bridgeId msg' &&
+      switchId msg == switchId msg' &&
       portId msg == portId msg'
 
 instance Ord ConfigurationMessage where
@@ -108,7 +118,7 @@ instance Ord ConfigurationMessage where
             GT ->
               LT
             EQ ->
-              case compare (bridgeId msg) (bridgeId msg') of
+              case compare (switchId msg) (switchId msg') of
                 LT ->
                   GT
                 GT ->
@@ -142,6 +152,17 @@ data PortAvailability
   = Disabled
   | Available {-# UNPACK #-} !PortData
 
+data SwitchStatus
+  = RootSwitch
+  | NonRootSwitch {-# UNPACK #-} !NonRootSwitch
+
+data NonRootSwitch = NonRootSwitch'
+  { rootPort :: {-# UNPACK #-} !PortNum
+  , rootPortId :: {-# UNPACK #-} !SwitchId
+  , designatedPorts :: !(Set PortNum)
+  , cost :: {-# UNPACK #-} !Word32
+  }
+
 -- When broadcasting, attempt to send on ports labelled 'Disabled' in
 -- case of out of date. If ever receive 'PortDisconnected' exception,
 -- switch port status to 'Disabled' and commence topology change
@@ -160,27 +181,36 @@ data Switch = Switch
   , portAvailability :: {-# UNPACK #-} !(Vector (TVar PortAvailability))
   , cache :: !(Map MAC CacheEntry)
   , notificationQueue :: !(TQueue Notification)
+  , iden :: {-# UNPACK #-} !SwitchId -- ^ TODO: enable dynamic updating of priority.
+  , switchStatus :: !(TVar SwitchStatus)
   }
 
 new
   :: (MonadIO m, MonadLogger m, MonadBaseControl IO m)
-  => Int -- ^ Number of ports. Pre: positive.
+  => Word16 -- ^ Number of ports. Pre: positive.
+  -> Priority -- ^ Switch priority. See also 'defaultPriority'.
   -> m Switch
-new n = do
+new n prio = do
   nic <- newNIC n True
   announce $ "Creating new STP Switch with address " <> (T.pack . show . address) nic
+  let
+    switchId
+      = SwitchId prio $ address nic
   atomically' $ Switch nic
-    <$> (V.replicateM n $ newTVar Disabled)
+    <$> (V.replicateM (fromIntegral n) $ newTVar Disabled)
     <*> Map.new
     <*> newTQueue
+    <*> return switchId
+    <*> newTVar RootSwitch
 
+-- | The status of the 'Switch' is re-initialised with each 'run'.
 run
   :: (MonadIO m, MonadBaseControl IO m, MonadLogger m)
   => Switch
   -> m ()
-run (Switch nic portAvailability' cache' notificationQueue') = do 
-  atomically' initialisePortAvailability
-  forever $ do
+run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus') = do 
+  atomically' initialise
+  withAsync stpThread . const . forever $ do
     (sourcePort, frame) <- atomically' $ receiveOnNIC nic
     now <- liftIO getCurrentTime
     atomically' $ updateCache (source frame) sourcePort now
@@ -208,16 +238,20 @@ run (Switch nic portAvailability' cache' notificationQueue') = do
                   atomically' $ sendOnNIC outFrame nic port'
                   recordWithPort deviceName (address nic) port' . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
   where
-    initialisePortAvailability :: STM ()
-    initialisePortAvailability = do
-      portInfo' <- portInfo nic
-      V.forM_ (V.indexed portInfo') $ \(fromIntegral -> i, info) ->
-        writeTVar (portAvailability' V.! i) $
-          if isConnected info
-            then
-              Available newPortData
-            else
-              Disabled
+    initialise :: STM ()
+    initialise = do
+      initialisePortAvailability
+      writeTVar switchStatus' RootSwitch
+      where
+        initialisePortAvailability = do
+          portInfo' <- portInfo nic
+          V.forM_ (V.indexed portInfo') $ \(i, info) ->
+            writeTVar (portAvailability' V.! i) $
+              if isConnected info
+                then
+                  Available newPortData
+                else
+                  Disabled
               
     -- Forward broadcast frame on ports in 'Forwarding' state.
     broadcast originPort frame
@@ -262,3 +296,66 @@ run (Switch nic portAvailability' cache' notificationQueue') = do
               return ()
         _ ->
           return ()
+
+    stpThread 
+      = forever $ do
+          NewMessage sourcePort bpdu <- atomically' $ readTQueue notificationQueue'
+          case bpdu of
+            TopologyChange ->
+              undefined
+            Configuration msg -> do
+              bestMessageUpdated <- atomically' $ do
+                let
+                  tVar
+                    = portAvailability' V.! (fromIntegral sourcePort)
+                pa <- readTVar tVar
+                case pa of
+                  Disabled ->
+                    return False
+                  Available portData' -> 
+                    case configuration portData' of
+                      Nothing -> do 
+                        writeTVar tVar . Available $ portData' { configuration = Just msg }
+                        return True
+                      Just msg' ->
+                        if msg > msg'
+                          then do
+                            writeTVar tVar . Available $ portData' { configuration = Just msg }
+                            return True
+                          else
+                            return False
+                            
+              when bestMessageUpdated $ do
+                let
+                  getBestMessageByPort msgs (fromIntegral -> portNum') tVar = do 
+                    pa <- readTVar tVar
+                    case pa of
+                      Available (configuration -> Just msg) ->
+                        return ((portNum', msg) : msgs)
+                      _ ->
+                        return msgs
+                bestMessages <- atomically' $ V.ifoldM getBestMessageByPort [] portAvailability'
+                if null bestMessages
+                  then do
+                    atomically' $ writeTVar switchStatus' RootSwitch
+                  else do 
+                    let
+                      (rootPort', bestMsg)
+                        = minimumBy (comparing snd) bestMessages
+                      rootId'
+                        = rootId bestMsg
+                    if iden' > rootId'
+                      then do
+                        atomically' $ writeTVar switchStatus' RootSwitch
+                      else do
+                        let
+                          cost'
+                            = 1 + rootPathCost bestMsg
+                          dummyMessage
+                            = ConfigurationMessage False False rootId' cost' iden' 0 0 0 0 0
+                          designatedPorts'
+                            = Set.fromList . map fst . filter ((dummyMessage >) . snd) $ bestMessages
+                          nonRootSwitch
+                            = NonRootSwitch' rootPort' rootId' designatedPorts' cost'
+                        atomically' . writeTVar switchStatus' $ NonRootSwitch nonRootSwitch
+              undefined          
