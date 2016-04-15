@@ -27,6 +27,8 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Foldable
 import Data.Ord
+import Data.Fixed
+import Control.Concurrent (threadDelay)
 
 deviceName
   = "STP switch"
@@ -170,6 +172,7 @@ data NonRootSwitch = NonRootSwitch'
 
 data Notification
   = NewMessage {-# UNPACK #-} !PortNum !BPDU
+  | Hello
 
 data CacheEntry = CacheEntry
   { timestamp :: {-# UNPACK #-} !UTCTime -- ^ Time at which the entry was installed into the cache.
@@ -183,6 +186,8 @@ data Switch = Switch
   , notificationQueue :: !(TQueue Notification)
   , iden :: {-# UNPACK #-} !SwitchId -- ^ TODO: enable dynamic updating of priority.
   , switchStatus :: !(TVar SwitchStatus)
+  , lastHello :: !(TVar (Maybe UTCTime))
+  , switchHelloTime :: !(TVar Word16) -- ^ Measured in 1/256 seconds.
   }
 
 new
@@ -202,41 +207,44 @@ new n prio = do
     <*> newTQueue
     <*> return switchId
     <*> newTVar RootSwitch
+    <*> newTVar Nothing
+    <*> newTVar 1
 
 -- | The status of the 'Switch' is re-initialised with each 'run'.
 run
   :: (MonadIO m, MonadBaseControl IO m, MonadLogger m)
   => Switch
   -> m ()
-run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus') = do 
+run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus' lastHello' switchHelloTime') = do 
   atomically' initialise
-  withAsync stpThread . const . forever $ do
-    (sourcePort, frame) <- atomically' $ receiveOnNIC nic
-    now <- liftIO getCurrentTime
-    atomically' $ updateCache (source frame) sourcePort now
-    case destination frame of
-      Broadcast ->
-        broadcast sourcePort frame
-      Unicast dest ->
-        if dest == stpAddr
-          then
-            case decodeOrFail (payload frame) of
-              Left (_, _, err) ->
-                recordWithPort deviceName (address nic) sourcePort . T.pack $ "Error when deserialising BPDU: " <> err
-              Right (_, _, bpdu) ->
-                atomically' . writeTQueue notificationQueue' $ NewMessage sourcePort bpdu
-          else do
-            when (dest /= address nic) $ do 
-              port <- atomically' $ Map.lookup dest cache'
-              case port of
-                Nothing -> do
-                  broadcast sourcePort frame
-                Just (portNum -> port') -> do
-                  let
-                    outFrame
-                      = frame { destination = dest }
-                  atomically' $ sendOnNIC outFrame nic port'
-                  recordWithPort deviceName (address nic) port' . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
+  withAsync timer . const $ 
+    withAsync stpThread . const . forever $ do
+      (sourcePort, frame) <- atomically' $ receiveOnNIC nic
+      now <- liftIO getCurrentTime
+      atomically' $ updateCache (source frame) sourcePort now
+      case destination frame of
+        Broadcast ->
+          broadcast sourcePort frame
+        Unicast dest ->
+          if dest == stpAddr
+            then
+              case decodeOrFail (payload frame) of
+                Left (_, _, err) ->
+                  recordWithPort deviceName (address nic) sourcePort . T.pack $ "Error when deserialising BPDU: " <> err
+                Right (_, _, bpdu) ->
+                  atomically' . writeTQueue notificationQueue' $ NewMessage sourcePort bpdu
+            else do
+              when (dest /= address nic) $ do 
+                port <- atomically' $ Map.lookup dest cache'
+                case port of
+                  Nothing -> do
+                    broadcast sourcePort frame
+                  Just (portNum -> port') -> do
+                    let
+                      outFrame
+                        = frame { destination = dest }
+                    atomically' $ sendOnNIC outFrame nic port'
+                    recordWithPort deviceName (address nic) port' . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
   where
     -- A wrapper around 'sendOnNIC' that ensure the port is in the
     -- 'Forwarding' state before sending. The return value indicates
@@ -389,4 +397,33 @@ run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus')
                   return ((portNum', msg) : msgs)
                 _ ->
                   return msgs
-            
+
+    timer = forever $ do
+      now <- liftIO getCurrentTime
+      atomically' $ do 
+        len <- readTVar switchHelloTime'
+        t <- readTVar lastHello'
+        let
+          helloDue
+            = maybe False ((now >=) . addUTCTime (word16ToNominalDiffTime len)) t
+        when helloDue $ do 
+          writeTQueue notificationQueue' Hello
+          writeTVar lastHello' $ Just now
+      sleep
+      where
+        sleep 
+          = liftIO $ do 
+              now <- getCurrentTime
+              let
+                remainder
+                  = utctDayTime now `mod'` freq
+              threadDelay . truncate $ remainder * 1000000
+          where
+            freq
+              = 0.00390625 -- 1/256 seconds.
+
+word16ToNominalDiffTime
+  :: Word16
+  -> NominalDiffTime
+word16ToNominalDiffTime
+  = (/ 256) . fromIntegral 
