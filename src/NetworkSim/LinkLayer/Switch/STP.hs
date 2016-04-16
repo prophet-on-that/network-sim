@@ -29,10 +29,9 @@ import Data.Foldable
 import Data.Ord
 import Data.Fixed
 import Control.Concurrent (threadDelay)
-import Data.List (intercalate)
 
 deviceName
-  = "STP switch"
+  = "STP Switch"
 
 type Priority = Word16
 
@@ -43,7 +42,11 @@ defaultPriority
 data SwitchId = SwitchId
   { priority :: {-# UNPACK #-} !Priority
   , switchAddr :: {-# UNPACK #-} !MAC
-  } deriving (Eq, Show, Generic, Binary)
+  } deriving (Eq, Generic, Binary)
+
+instance Show SwitchId where
+  show (SwitchId priority' switchAddr')
+    = show priority' <> "." <> show switchAddr'
 
 instance Ord SwitchId where
   compare sid sid'
@@ -134,6 +137,19 @@ instance Ord ConfigurationMessage where
                       LT
                     EQ ->
                       EQ
+
+-- | Alternative to Show instance which is a shorter representation of
+-- the 'ConfigurationMessage'.
+showConfigurationMessage
+  :: ConfigurationMessage
+  -> T.Text
+showConfigurationMessage msg
+  = T.intercalate "/"
+      [ T.pack . show . rootId $ msg
+      , T.pack . show . rootPathCost $ msg
+      , T.pack . show . switchId $ msg
+      , T.pack . show . portId $ msg
+      ]
 
 data PortStatus
   = Blocked
@@ -322,19 +338,16 @@ run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus' 
               ss <- atomically' $ readTVar switchStatus'
               case ss of
                 RootSwitch -> do
-                  sendStatus <- forConcurrently [0 .. portCount' - 1] $ \i -> do
+                  void $ forConcurrently [0 .. portCount' - 1] $ \i -> do
                     let
                       configurationMsg
                         = ConfigurationMessage False False iden' 0 iden' i 0 0 0 0
                       frame
                         = Frame stpAddr (switchAddr iden') $ encode configurationMsg
                     sent <- atomically' $ sendOnPort frame i
-                    return (i, sent)
-                  let
-                    portsSentOn
-                      = map fst . filter snd $ sendStatus
-                  when (not . null $ portsSentOn) $ do 
-                    record deviceName (switchAddr iden') . T.pack $ "Sent Hello message on ports " <> (intercalate ", " . map show) portsSentOn
+                    when sent $
+                      recordWithPort deviceName (switchAddr iden') i $ "Sending Hello: " <> showConfigurationMessage configurationMsg
+                    
                 _ ->
                   return ()
               
