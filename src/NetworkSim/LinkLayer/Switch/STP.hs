@@ -147,10 +147,6 @@ data PortData = PortData
   , configuration :: !(Maybe ConfigurationMessage)
   } deriving (Show)
 
-newPortData :: PortData
-newPortData
-  = PortData Blocked Nothing
-
 data PortAvailability
   = Disabled
   | Available {-# UNPACK #-} !PortData
@@ -278,7 +274,7 @@ run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus' 
             writeTVar (portAvailability' V.! i) $
               if isConnected info
                 then
-                  Available newPortData
+                  Available $ PortData Forwarding Nothing
                 else
                   Disabled
               
