@@ -414,6 +414,15 @@ run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus' 
               if iden' > rootId'
                 then do
                   writeTVar switchStatus' RootSwitch
+
+                  -- Set any blocked ports to 'Listening'.
+                  V.forM_ portAvailability' $ \tv -> do
+                    av <- readTVar tv
+                    case av of
+                      Available pd@(status -> Blocked) ->
+                        writeTVar tv . Available $ pd { status = Listening }
+                      _ ->
+                        return ()
                 else do
                   let
                     cost'
@@ -425,6 +434,23 @@ run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus' 
                     nonRootSwitch
                       = NonRootSwitch' rootPort' rootId' designatedPorts' cost'
                   writeTVar switchStatus' $ NonRootSwitch nonRootSwitch
+
+                  -- Set any ports not in the spanning tree to
+                  -- 'Blocked', if not already.
+                  let
+                    portsToBlock
+                      = filter (/= rootPort') . filter (not . flip Set.member designatedPorts') $ [0 .. portCount' - 1]
+                  forM_ portsToBlock $ \i -> do
+                    let
+                      tv
+                        = portAvailability' V.! (fromIntegral i)
+                    av <- readTVar tv
+                    case av of
+                      Available pd ->
+                        when (status pd /= Blocked) $
+                          writeTVar tv . Available $ pd { status = Blocked }
+                      _ ->
+                        return ()
           where
             getBestMessageByPort msgs (fromIntegral -> portNum') tVar = do 
               pa <- readTVar tVar
