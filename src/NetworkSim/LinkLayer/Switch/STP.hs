@@ -379,25 +379,25 @@ run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus' 
                                 
                   when bestMessageUpdated $ atomically' recompute
               
-                  atomically' $ do 
-                    ss <- readTVar switchStatus'
-                    case ss of
-                      RootSwitch ->
-                        -- TODO: further behaviour may be required here.
-                        return ()
-                      NonRootSwitch info ->
-                        if rootId msg == rootPortId info
-                          then
-                            -- TODO: consider use of 'mapConcurrently' here.
-                            forM_ (designatedPorts info) $ \i -> do
-                              let
-                                configurationMsg
-                                  = ConfigurationMessage False False (rootPortId info) (cost info) iden' i 0 0 0 0
-                                frame
-                                  = Frame stpAddr (switchAddr iden') $ encode configurationMsg
-                              void $ sendOnPort frame i 
-                          else
-                            return ()
+                  ss <- atomically' $ readTVar switchStatus'
+                  case ss of
+                    RootSwitch ->
+                      -- TODO: further behaviour may be required here.
+                      return ()
+                    NonRootSwitch info ->
+                      if rootId msg == rootPortId info
+                        then
+                          forM_ (designatedPorts info) $ \i -> do
+                            let
+                              configurationMsg
+                                = ConfigurationMessage False False (rootPortId info) (cost info) iden' i 0 0 0 0
+                              frame
+                                = Frame stpAddr (switchAddr iden') $ encode configurationMsg
+                            sent <- atomically' $ sendOnPort frame i
+                            when sent $ 
+                              recordWithPort deviceName (switchAddr iden') i $ "Sending configuration: " <> showConfigurationMessage configurationMsg
+                        else
+                          return ()
       where
         recompute :: STM ()
         recompute = do 
