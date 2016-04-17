@@ -29,6 +29,7 @@ import Data.Foldable
 import Data.Ord
 import Data.Fixed
 import Control.Concurrent (threadDelay)
+import GHC.Exts (groupWith)
 
 deviceName
   = "STP Switch"
@@ -156,7 +157,7 @@ data PortStatus
   | Listening
   | Learning
   | Forwarding
-  deriving (Eq, Show)
+  deriving (Show, Eq, Ord)
 
 data PortData = PortData
   { status :: !PortStatus
@@ -377,7 +378,7 @@ run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus' 
                               else
                                 return False
                                 
-                  when bestMessageUpdated $ atomically' recompute
+                  when bestMessageUpdated recompute
               
                   ss <- atomically' $ readTVar switchStatus'
                   case ss of
@@ -399,66 +400,94 @@ run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus' 
                         else
                           return ()
       where
-        recompute :: STM ()
-        recompute = do 
-          bestMessages <- V.ifoldM getBestMessageByPort [] portAvailability'
-          if null bestMessages
-            then do
-              writeTVar switchStatus' RootSwitch
-            else do 
-              let
-                (rootPort', bestMsg)
-                  = minimumBy (comparing snd) bestMessages
-                rootId'
-                  = rootId bestMsg
-              if iden' > rootId'
+        -- 'recompute' is an atomic operation which requires an
+        -- IO-based monadic type for logging only.
+        recompute = do
+          statusChanges <- atomically' recompute'
+          when (not . null $ statusChanges) $ do
+            let
+              printedChanges
+                = map printChanges $ groupWith snd statusChanges
+                where
+                  printChanges changes
+                    = (T.intercalate ", " . map (T.pack . show)) affectedPorts <> " to " <> (T.pack . show) newStatus
+                    where
+                      newStatus
+                        = snd . head $ changes
+                      affectedPorts
+                        = map fst changes
+            record deviceName (switchAddr iden') $ "Updating port statuses: " <> T.intercalate ", " printedChanges
+          where
+            recompute' :: STM [(PortNum, PortStatus)]
+            recompute' = do 
+              bestMessages <- V.ifoldM getBestMessageByPort [] portAvailability'
+              if null bestMessages
                 then do
                   writeTVar switchStatus' RootSwitch
-
-                  -- Set any blocked ports to 'Listening'.
-                  V.forM_ portAvailability' $ \tv -> do
-                    av <- readTVar tv
-                    case av of
-                      Available pd@(status -> Blocked) ->
-                        writeTVar tv . Available $ pd { status = Listening }
-                      _ ->
-                        return ()
-                else do
+                  return []
+                else do 
                   let
-                    cost'
-                      = 1 + rootPathCost bestMsg
-                    dummyMessage
-                      = ConfigurationMessage False False rootId' cost' iden' 0 0 0 0 0
-                    designatedPorts'
-                      = Set.fromList . map fst . filter ((dummyMessage >) . snd) $ bestMessages
-                    nonRootSwitch
-                      = NonRootSwitch' rootPort' rootId' designatedPorts' cost'
-                  writeTVar switchStatus' $ NonRootSwitch nonRootSwitch
-
-                  -- Set any ports not in the spanning tree to
-                  -- 'Blocked', if not already.
-                  let
-                    portsToBlock
-                      = filter (/= rootPort') . filter (not . flip Set.member designatedPorts') $ [0 .. portCount' - 1]
-                  forM_ portsToBlock $ \i -> do
-                    let
-                      tv
-                        = portAvailability' V.! (fromIntegral i)
-                    av <- readTVar tv
-                    case av of
-                      Available pd ->
-                        when (status pd /= Blocked) $
-                          writeTVar tv . Available $ pd { status = Blocked }
-                      _ ->
-                        return ()
-          where
-            getBestMessageByPort msgs (fromIntegral -> portNum') tVar = do 
-              pa <- readTVar tVar
-              case pa of
-                Available (configuration -> Just msg) ->
-                  return ((portNum', msg) : msgs)
-                _ ->
-                  return msgs
+                    (rootPort', bestMsg)
+                      = minimumBy (comparing snd) bestMessages
+                    rootId'
+                      = rootId bestMsg
+                  if iden' > rootId'
+                    then do
+                      writeTVar switchStatus' RootSwitch
+              
+                      -- Set any blocked ports to 'Listening'.
+                      let
+                        unblockPort unblocked (fromIntegral -> i) tv = do 
+                          av <- readTVar tv
+                          case av of
+                            Available pd@(status -> Blocked) -> do 
+                              writeTVar tv . Available $ pd { status = Listening }
+                              return $ (i, Listening) : unblocked
+                            _ ->
+                              return unblocked
+                      V.ifoldM' unblockPort [] portAvailability'
+                    else do
+                      let
+                        cost'
+                          = 1 + rootPathCost bestMsg
+                        dummyMessage
+                          = ConfigurationMessage False False rootId' cost' iden' 0 0 0 0 0
+                        designatedPorts'
+                          = Set.fromList . map fst . filter ((dummyMessage >) . snd) $ bestMessages
+                        nonRootSwitch
+                          = NonRootSwitch' rootPort' rootId' designatedPorts' cost'
+                      writeTVar switchStatus' $ NonRootSwitch nonRootSwitch
+              
+                      -- Set any ports not in the spanning tree to
+                      -- 'Blocked', if not already.
+                      let
+                        blockPort blocked i = do
+                          let
+                            tv
+                              = portAvailability' V.! (fromIntegral i)
+                          av <- readTVar tv
+                          case av of
+                            Available pd ->
+                              if status pd /= Blocked
+                                then do 
+                                  writeTVar tv . Available $ pd { status = Blocked }
+                                  return $ (i, Blocked) : blocked
+                               else
+                                 return blocked
+                            _ ->
+                              return blocked
+                          
+                        portsToBlock
+                          = filter (/= rootPort') . filter (not . flip Set.member designatedPorts') $ [0 .. portCount' - 1]
+                      foldlM blockPort [] portsToBlock
+              where
+                getBestMessageByPort msgs (fromIntegral -> portNum') tVar = do 
+                  pa <- readTVar tVar
+                  case pa of
+                    Available (configuration -> Just msg) ->
+                      return ((portNum', msg) : msgs)
+                    _ ->
+                      return msgs
 
     timer
       = forever $ do
