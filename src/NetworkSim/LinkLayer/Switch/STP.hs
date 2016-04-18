@@ -154,10 +154,32 @@ showConfigurationMessage msg
 
 data PortStatus
   = Blocked
-  | Listening
-  | Learning
+  | Listening {-# UNPACK #-} !UTCTime
+  | Learning {-# UNPACK #-} !UTCTime
   | Forwarding
   deriving (Show, Eq, Ord)
+
+portStatusStr
+  :: PortStatus
+  -> T.Text
+portStatusStr Blocked
+  = "Blocked"
+portStatusStr (Listening _)
+  = "Listening"
+portStatusStr (Learning _)
+  = "Learning"
+portStatusStr Forwarding
+  = "Forwarding"
+
+isListeningStatus (Listening _)
+  = True
+isListeningStatus _
+  = False
+
+isLearningStatus (Learning _)
+  = True
+isLearningStatus _
+  = False
 
 data PortData = PortData
   { status :: !PortStatus
@@ -203,6 +225,7 @@ data Switch = Switch
   , switchStatus :: !(TVar SwitchStatus)
   , lastHello :: !(TVar (Maybe UTCTime))
   , switchHelloTime :: !(TVar Word16) -- ^ Measured in 1/256 seconds.
+  , switchForwardDelay :: !(TVar Word16) -- ^ Measured in 1/256 seconds.
   }
 
 new
@@ -224,13 +247,14 @@ new n prio = do
     <*> newTVar RootSwitch
     <*> newTVar Nothing
     <*> newTVar 512
+    <*> newTVar 3840
 
 -- | The status of the 'Switch' is re-initialised with each 'run'.
 run
   :: (MonadIO m, MonadBaseControl IO m, MonadLogger m)
   => Switch
   -> m ()
-run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus' lastHello' switchHelloTime') = do 
+run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus' lastHello' switchHelloTime' switchForwardDelay') = do 
   atomically' initialise
   withAsync timer . const $ 
     withAsync stpThread . const . forever $ do
@@ -323,7 +347,7 @@ run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus' 
       av <- readTVar $ portAvailability' V.! (fromIntegral portNum)
       case av of
         Available pd ->
-          if status pd == Forwarding || status pd == Learning
+          if status pd == Forwarding || (isLearningStatus . status) pd
             then
               Map.insert (CacheEntry timestamp' portNum) source' cache'
             else
@@ -377,7 +401,7 @@ run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus' 
                                 return True
                               else
                                 return False
-                                
+
                   when bestMessageUpdated recompute
               
                   ss <- atomically' $ readTVar switchStatus'
@@ -402,24 +426,13 @@ run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus' 
       where
         -- 'recompute' is an atomic operation which requires an
         -- IO-based monadic type for logging only.
-        recompute = do
-          statusChanges <- atomically' recompute'
-          when (not . null $ statusChanges) $ do
-            let
-              printedChanges
-                = map printChanges $ groupWith snd statusChanges
-                where
-                  printChanges changes
-                    = (T.intercalate ", " . map (T.pack . show)) affectedPorts <> " to " <> (T.pack . show) newStatus
-                    where
-                      newStatus
-                        = snd . head $ changes
-                      affectedPorts
-                        = map fst changes
-            record deviceName (switchAddr iden') $ "Updating port statuses: " <> T.intercalate ", " printedChanges
+        recompute
+          = liftIO getCurrentTime >>= atomically' . recompute' >>= logPortStatusChanges
           where
-            recompute' :: STM [(PortNum, PortStatus)]
-            recompute' = do 
+            recompute'
+              :: UTCTime
+              -> STM [(PortNum, PortStatus)]
+            recompute' now = do 
               bestMessages <- V.ifoldM getBestMessageByPort [] portAvailability'
               if null bestMessages
                 then do
@@ -441,8 +454,8 @@ run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus' 
                           av <- readTVar tv
                           case av of
                             Available pd@(status -> Blocked) -> do 
-                              writeTVar tv . Available $ pd { status = Listening }
-                              return $ (i, Listening) : unblocked
+                              writeTVar tv . Available $ pd { status = Listening now }
+                              return $ (i, Listening now) : unblocked
                             _ ->
                               return unblocked
                       V.ifoldM' unblockPort [] portAvailability'
@@ -488,21 +501,70 @@ run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus' 
                       return ((portNum', msg) : msgs)
                     _ ->
                       return msgs
+ 
+    logPortStatusChanges statusChanges
+      = when (not . null $ statusChanges) $ do
+          let
+            printedChanges
+              = map printChanges $ groupWith snd statusChanges
+              where
+                printChanges changes
+                  = (T.intercalate ", " . map (T.pack . show)) affectedPorts <> " to " <> portStatusStr newStatus
+                  where
+                    newStatus
+                      = snd . head $ changes
+                    affectedPorts
+                      = map fst changes
+          record deviceName (switchAddr iden') $ "Updating port statuses: " <> T.intercalate ", " printedChanges
 
     timer
       = forever $ do
           now <- liftIO getCurrentTime
-          atomically' $ do 
-            len <- readTVar switchHelloTime'
-            t <- readTVar lastHello'
-            let
-              helloDue
-                = maybe True ((now >=) . addUTCTime (word16ToNominalDiffTime len)) t
-            when helloDue $ do 
-              writeTQueue notificationQueue' Hello
-              writeTVar lastHello' $ Just now
+          atomically' $ checkHelloDue now
+          updatePortStatus now
           sleep
       where
+        checkHelloDue now = do 
+          len <- readTVar switchHelloTime'
+          t <- readTVar lastHello'
+          let
+            helloDue
+              = maybe True ((now >=) . addUTCTime (word16ToNominalDiffTime len)) t
+          when helloDue $ do 
+            writeTQueue notificationQueue' Hello
+            writeTVar lastHello' $ Just now
+
+        updatePortStatus now
+          = atomically' updatePortStatus' >>= logPortStatusChanges
+          where
+            updatePortStatus' = do 
+              forwardDelay' <- readTVar switchForwardDelay'
+              let
+                update updated (fromIntegral -> i) tv = do
+                  av <- readTVar tv
+                  case av of
+                    Available pd@(status -> Listening t) -> do
+                      let
+                        t'
+                          = addUTCTime (word16ToNominalDiffTime forwardDelay') t
+                      if now >= t' 
+                        then do
+                          writeTVar tv . Available $ pd { status = Learning t' }
+                          return $ (i, Learning t') : updated
+                        else do
+                          return updated
+                    Available pd@(status -> Learning t) -> 
+                      if now >= addUTCTime (word16ToNominalDiffTime forwardDelay') t
+                        then do
+                          writeTVar tv . Available $ pd { status = Forwarding }
+                          return $ (i, Forwarding) : updated
+                        else do
+                          return updated
+                    _ ->
+                      return updated
+              
+              V.ifoldM' update [] portAvailability'
+              
         sleep 
           = liftIO $ do 
               now <- getCurrentTime
