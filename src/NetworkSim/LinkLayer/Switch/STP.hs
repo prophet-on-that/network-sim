@@ -30,6 +30,7 @@ import Data.Ord
 import Data.Fixed
 import Control.Concurrent (threadDelay)
 import GHC.Exts (groupWith)
+import Data.List (sort)
 
 deviceName
   = "STP Switch"
@@ -522,7 +523,7 @@ run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus' 
                     newStatus
                       = snd . head $ changes
                     affectedPorts
-                      = map fst changes
+                      = sort $ map fst changes
           record deviceName (switchAddr iden') $ "Updating port statuses: " <> T.intercalate ", " printedChanges
 
     timer
