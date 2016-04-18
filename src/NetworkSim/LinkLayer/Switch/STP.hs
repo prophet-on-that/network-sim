@@ -187,13 +187,14 @@ data PortAvailability
 data SwitchStatus
   = RootSwitch
   | NonRootSwitch {-# UNPACK #-} !NonRootSwitch
+  deriving (Eq)
 
 data NonRootSwitch = NonRootSwitch'
   { rootPort :: {-# UNPACK #-} !PortNum
   , rootPortId :: {-# UNPACK #-} !SwitchId
   , designatedPorts :: !(Set PortNum)
   , cost :: {-# UNPACK #-} !Word32
-  }
+  } deriving (Eq)
 
 -- When broadcasting, attempt to send on ports labelled 'Disabled' in
 -- case of out of date. If ever receive 'PortDisconnected' exception,
@@ -430,15 +431,16 @@ run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus' 
         recompute = do 
           now <- liftIO getCurrentTime
           (ss, statusChanges) <- atomically' $ do
+            ssOld <- readTVar switchStatus' 
             statusChanges <- recompute' now
             ss <- readTVar switchStatus'
-            return (ss, statusChanges)
+            return (mfilter (/= ssOld) $ Just ss, statusChanges)
 
           -- Log switch status.
           case ss of
-            RootSwitch ->
+            Just RootSwitch ->
               record deviceName (switchAddr iden') $ "STP recompute, switch is root"
-            NonRootSwitch (NonRootSwitch' rootPort' rootPortId' designatedPorts' cost') ->
+            Just (NonRootSwitch (NonRootSwitch' rootPort' rootPortId' designatedPorts' cost')) ->
               let
                 str
                   = if Set.null designatedPorts'
@@ -448,6 +450,8 @@ run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus' 
                         T.intercalate ", " . map (T.pack . show) . Set.toList $ designatedPorts'
               in 
                 record deviceName (switchAddr iden') $ "STP recompute, root is " <> (T.pack . show) rootPortId' <> " on local port #" <> (T.pack . show) rootPort' <> ", cost " <> (T.pack . show) cost' <> ". Designated ports: " <> str <> "."
+            Nothing ->
+              return ()
           
           logPortStatusChanges statusChanges
           where
