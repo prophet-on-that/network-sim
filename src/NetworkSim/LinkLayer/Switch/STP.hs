@@ -436,8 +436,29 @@ run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus' 
       where
         -- 'recompute' is an atomic operation which requires an
         -- IO-based monadic type for logging only.
-        recompute
-          = liftIO getCurrentTime >>= atomically' . recompute' >>= logPortStatusChanges
+        recompute = do 
+          now <- liftIO getCurrentTime
+          (ss, statusChanges) <- atomically' $ do
+            statusChanges <- recompute' now
+            ss <- readTVar switchStatus'
+            return (ss, statusChanges)
+
+          -- Log switch status.
+          case ss of
+            RootSwitch ->
+              record deviceName (switchAddr iden') $ "STP recompute, switch is root"
+            NonRootSwitch (NonRootSwitch' rootPort' rootPortId' designatedPorts' cost') ->
+              let
+                str
+                  = if Set.null designatedPorts'
+                      then
+                        "none"
+                      else
+                        T.intercalate ", " . map (T.pack . show) . Set.toList $ designatedPorts'
+              in 
+                record deviceName (switchAddr iden') $ "STP recompute, root is " <> (T.pack . show) rootPortId' <> " on local port #" <> (T.pack . show) rootPort' <> ", cost " <> (T.pack . show) cost' <> ". Designated ports: " <> str <> "."
+          
+          logPortStatusChanges statusChanges
           where
             recompute'
               :: UTCTime
