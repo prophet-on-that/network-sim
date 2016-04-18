@@ -31,6 +31,7 @@ import Data.Fixed
 import Control.Concurrent (threadDelay)
 import GHC.Exts (groupWith)
 import Data.List (sort)
+import Data.Maybe (fromMaybe)
 
 deviceName
   = "STP Switch"
@@ -441,8 +442,11 @@ run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus' 
             recompute'
               :: UTCTime
               -> STM [(PortNum, PortStatus)]
-            recompute' now = do 
-              bestMessages <- V.ifoldM getBestMessageByPort [] portAvailability'
+            recompute' now = do
+              messages <- V.ifoldM getMessageByPort [] portAvailability'
+              let
+                bestMessages
+                  = [(i, msg) | (i, Just msg) <- messages]
               if null bestMessages
                 then do
                   writeTVar switchStatus' RootSwitch
@@ -475,7 +479,7 @@ run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus' 
                         dummyMessage
                           = ConfigurationMessage False False rootId' cost' iden' 0 0 0 0 0
                         designatedPorts'
-                          = Set.fromList . map fst . filter ((dummyMessage >) . snd) $ bestMessages
+                          = Set.fromList . map fst . filter (fromMaybe True . fmap (dummyMessage >) . snd) $ messages
                         nonRootSwitch
                           = NonRootSwitch' rootPort' rootId' designatedPorts' cost'
                       writeTVar switchStatus' $ NonRootSwitch nonRootSwitch
@@ -503,10 +507,10 @@ run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus' 
                           = filter (/= rootPort') . filter (not . flip Set.member designatedPorts') $ [0 .. portCount' - 1]
                       foldlM blockPort [] portsToBlock
               where
-                getBestMessageByPort msgs (fromIntegral -> portNum') tVar = do 
+                getMessageByPort msgs (fromIntegral -> portNum') tVar = do 
                   pa <- readTVar tVar
                   case pa of
-                    Available (configuration -> Just msg) ->
+                    Available (configuration -> msg) ->
                       return ((portNum', msg) : msgs)
                     _ ->
                       return msgs
