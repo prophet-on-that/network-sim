@@ -53,20 +53,14 @@ instance Show SwitchId where
 
 instance Ord SwitchId where
   compare sid sid'
-    = case compare (priority sid) (priority sid') of
-        GT ->
-          LT
-        LT ->
-          GT
-        EQ ->
-          case compare (switchAddr sid) (switchAddr sid') of
-            GT ->
-              LT
-            LT ->
-              GT
-            EQ ->
-              EQ
-
+    | comp == EQ
+        = comparing (Down . switchAddr) sid sid'
+    | otherwise
+        = comp
+    where
+      comp
+        = comparing (Down . priority) sid sid'
+          
 data BPDU
   = TopologyChange
   | Configuration {-# UNPACK #-} !ConfigurationMessage
@@ -115,31 +109,28 @@ instance Eq ConfigurationMessage where
 
 instance Ord ConfigurationMessage where
   compare msg msg'
-    = case compare (rootId msg) (rootId msg') of
-        LT ->
-          GT
-        GT ->
-          LT
-        EQ ->
-          case compare (rootPathCost msg) (rootPathCost msg') of
-            LT ->
-              GT
-            GT ->
-              LT
-            EQ ->
-              case compare (switchId msg) (switchId msg') of
-                LT ->
-                  GT
-                GT ->
-                  LT
-                EQ ->
-                  case compare (portId msg) (portId msg') of
-                    LT ->
-                      GT
-                    GT ->
-                      LT
-                    EQ ->
-                      EQ
+    = if c0 == EQ
+        then
+          if c1 == EQ
+            then
+              if c2 == EQ
+                then
+                  c3
+                else
+                  c2
+            else
+              c1
+        else
+          c0
+    where
+      c0
+        = comparing rootId msg msg'
+      c1 
+        = comparing (Down . rootPathCost) msg msg'
+      c2
+        = comparing switchId msg msg'
+      c3 
+        = comparing (Down . portId) msg msg'
 
 -- | Alternative to Show instance which is a shorter representation of
 -- the 'ConfigurationMessage'.
@@ -386,7 +377,7 @@ run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus' 
                 _ ->
                   return ()
               
-            NewMessage sourcePort bpdu -> 
+            NewMessage sourcePort bpdu ->
               case bpdu of
                 TopologyChange ->
                   undefined
@@ -475,7 +466,7 @@ run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus' 
                 else do 
                   let
                     (rootPort', bestMsg)
-                      = minimumBy (comparing snd) bestMessages
+                      = maximumBy (comparing snd) bestMessages
                     rootId'
                       = rootId bestMsg
                   if iden' > rootId'
