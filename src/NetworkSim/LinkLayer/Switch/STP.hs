@@ -228,6 +228,14 @@ data Switch = Switch
   , switchForwardDelay :: !(TVar Word16) -- ^ Measured in 1/256 seconds.
   }
 
+defaultHelloTime :: Word16
+defaultHelloTime
+  = 512
+
+defaultForwardDelay :: Word16
+defaultForwardDelay
+  = 3840
+
 new
   :: (MonadIO m, MonadLogger m, MonadBaseControl IO m)
   => Word16 -- ^ Number of ports. Pre: positive.
@@ -246,8 +254,8 @@ new n prio = do
     <*> return switchId
     <*> newTVar RootSwitch
     <*> newTVar Nothing
-    <*> newTVar 512
-    <*> newTVar 3840
+    <*> newTVar defaultHelloTime
+    <*> newTVar defaultForwardDelay
 
 -- | The status of the 'Switch' is re-initialised with each 'run'.
 run
