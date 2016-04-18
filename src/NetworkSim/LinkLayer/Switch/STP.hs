@@ -376,7 +376,7 @@ run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus' 
                       configurationMsg
                         = ConfigurationMessage False False iden' 0 iden' i 0 0 0 0
                       frame
-                        = Frame stpAddr (switchAddr iden') $ encode configurationMsg
+                        = Frame stpAddr (switchAddr iden') . encode $ Configuration configurationMsg
                     sent <- atomically' $ sendOnPort frame i
                     when sent $
                       recordWithPort deviceName (switchAddr iden') i $ "Sending Hello: " <> showConfigurationMessage configurationMsg
@@ -425,7 +425,7 @@ run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus' 
                               configurationMsg
                                 = ConfigurationMessage False False (rootPortId info) (cost info) iden' i 0 0 0 0
                               frame
-                                = Frame stpAddr (switchAddr iden') $ encode configurationMsg
+                                = Frame stpAddr (switchAddr iden') . encode $ Configuration configurationMsg
                             sent <- atomically' $ sendOnPort frame i
                             when sent $ 
                               recordWithPort deviceName (switchAddr iden') i $ "Sending configuration: " <> showConfigurationMessage configurationMsg
