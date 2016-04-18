@@ -257,7 +257,7 @@ run
   => Switch
   -> m ()
 run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus' lastHello' switchHelloTime' switchForwardDelay') = do 
-  atomically' initialise
+  initialise
   withAsync timer . const $ 
     withAsync stpThread . const . forever $ do
       (sourcePort, frame) <- atomically' $ receiveOnNIC nic
@@ -306,20 +306,36 @@ run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus' 
         _ ->
           return False
     
-    initialise :: STM ()
     initialise = do
-      initialisePortAvailability
-      writeTVar switchStatus' RootSwitch
+      atomically' initialise'
+      logStatus
       where
-        initialisePortAvailability = do
-          portInfo' <- portInfo nic
-          V.forM_ (V.indexed portInfo') $ \(i, info) ->
-            writeTVar (portAvailability' V.! i) $
-              if isConnected info
-                then
-                  Available $ PortData Forwarding Nothing
-                else
-                  Disabled
+        initialise' :: STM ()
+        initialise' = do 
+          initialisePortAvailability
+          writeTVar switchStatus' RootSwitch
+          where
+            initialisePortAvailability = do
+              portInfo' <- portInfo nic
+              V.forM_ (V.indexed portInfo') $ \(i, info) ->
+                writeTVar (portAvailability' V.! i) $
+                  if isConnected info
+                    then
+                      Available $ PortData Forwarding Nothing
+                    else
+                      Disabled
+
+        logStatus = do
+          let
+            readPort ports i tv = do
+              av <- readTVar tv
+              case av of
+                Available _ ->
+                  return $ i : ports
+                _ ->
+                  return ports 
+          forwardingPorts <- atomically' $ V.ifoldM' readPort [] portAvailability'
+          record deviceName (switchAddr iden') $ "Initialising as root switch with forwarding ports: " <> (T.intercalate ", " . map (T.pack . show) . sort) forwardingPorts
               
     -- Forward broadcast frame on ports in 'Forwarding' state.
     broadcast originPort frame
