@@ -380,7 +380,10 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
       -> UTCTime
       -> STM ()
     updateCache source' portNum timestamp' = do
-      av <- readTVar $ portAvailability' V.! (fromIntegral portNum)
+      let
+        tvar
+          = portAvailability' V.! (fromIntegral portNum)
+      av <- readTVar tvar
       case av of
         Available pd ->
           if status pd == Forwarding || (isLearningStatus . status) pd
@@ -388,8 +391,9 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
               Map.insert (CacheEntry timestamp' portNum) source' cache'
             else
               return ()
-        _ ->
-          return ()
+        Disabled -> 
+          writeTVar tvar $ Available (PortData Blocked Nothing)
+          -- TODO: inform switch about topology change.
 
     stpThread 
       = forever $ do
