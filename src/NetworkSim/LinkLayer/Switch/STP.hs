@@ -2,6 +2,7 @@
 
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module NetworkSim.LinkLayer.Switch.STP
   ( Priority
@@ -223,12 +224,18 @@ data Switch = Switch
   , portAvailability :: {-# UNPACK #-} !(Vector (TVar PortAvailability))
   , cache :: !(Map MAC CacheEntry)
   , notificationQueue :: !(TQueue Notification)
-  , iden :: {-# UNPACK #-} !SwitchId -- ^ TODO: enable dynamic updating of priority.
+  , switchPriority :: {-# UNPACK #-} !Priority
   , switchStatus :: !(TVar SwitchStatus)
   , lastHello :: !(TVar (Maybe UTCTime))
   , switchHelloTime :: !(TVar Word16) -- ^ Measured in 1/256 seconds.
   , switchForwardDelay :: !(TVar Word16) -- ^ Measured in 1/256 seconds.
   }
+
+iden
+  :: Switch
+  -> SwitchId
+iden (Switch {..})
+  = SwitchId switchPriority (address interface)
 
 defaultHelloTime :: Word16
 defaultHelloTime
@@ -246,14 +253,11 @@ new
 new n prio = do
   nic <- newNIC n True
   announce $ "Creating new STP Switch with address " <> (T.pack . show . address) nic
-  let
-    switchId
-      = SwitchId prio $ address nic
   atomically' $ Switch nic
     <$> (V.replicateM (fromIntegral n) $ newTVar Disabled)
     <*> Map.new
     <*> newTQueue
-    <*> return switchId
+    <*> return prio
     <*> newTVar RootSwitch
     <*> newTVar Nothing
     <*> newTVar defaultHelloTime
@@ -264,7 +268,7 @@ run
   :: (MonadIO m, MonadBaseControl IO m, MonadLogger m)
   => Switch
   -> m ()
-run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus' lastHello' switchHelloTime' switchForwardDelay') = do 
+run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatus' lastHello' switchHelloTime' switchForwardDelay') = do 
   initialise
   withAsync timer . const $ 
     withAsync stpThread . const . forever $ do
@@ -295,6 +299,9 @@ run (Switch nic portAvailability' cache' notificationQueue' iden' switchStatus' 
                     atomically' $ sendOnNIC outFrame nic port'
                     recordWithPort deviceName (address nic) port' . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
   where
+    iden'
+      = iden switch
+        
     portCount'
       = portCount nic
         
