@@ -3,7 +3,15 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveAnyClass #-}
 
-module NetworkSim.LinkLayer.Switch.STP where
+module NetworkSim.LinkLayer.Switch.STP
+  ( Priority
+  , defaultPriority
+  , Switch (interface, switchHelloTime, switchForwardDelay)
+  , defaultHelloTime
+  , defaultForwardDelay
+  , new
+  , run
+  ) where
 
 import NetworkSim.LinkLayer
 
