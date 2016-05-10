@@ -7,8 +7,11 @@
 module NetworkSim.LinkLayer.Switch.STP
   ( Priority
   , defaultPriority
-  , Switch (interface, switchHelloTime, switchForwardDelay)
+  , Switch ()
+  , interface
+  , switchHelloTime
   , defaultHelloTime
+  , switchForwardDelay
   , defaultForwardDelay
   , new
   , run
