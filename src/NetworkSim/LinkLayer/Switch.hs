@@ -22,7 +22,6 @@ import Data.Monoid
 import qualified Data.Text as T
 import Control.Concurrent.STM
 import Control.Concurrent.Async.Lifted
-import qualified Data.Vector as V
 import Data.Maybe
 import Data.Time
 import qualified ListT
@@ -30,6 +29,7 @@ import qualified Focus
 import Data.Fixed (mod')
 import Control.Concurrent (threadDelay)
 import Data.Word
+import Control.Monad.Catch
 
 -- | A single-interface switch, which identifies hardware addresses
 -- with its ports to more efficiently forward frames. The port will be
@@ -61,7 +61,7 @@ new n ageingTime = do
       = 5
 
 run
-  :: (MonadIO m, MonadBaseControl IO m, MonadLogger m)
+  :: (MonadIO m, MonadCatch m, MonadBaseControl IO m, MonadLogger m)
   => Switch
   -> m ()
 run switch = do
@@ -76,13 +76,16 @@ run switch = do
             = destinationAddr . destination $ frame
           outFrame
             = frame { destination = dest }
-          forward i = do
-            portInfo' <- atomically' $ do
-              sendOnNIC outFrame nic i
-              portInfo nic
-    
-            when (fromMaybe False . fmap isConnected $ portInfo' V.!? (fromIntegral i)) $
-              recordWithPort deviceName (address nic) i . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
+          forward i
+            = handle handler $ do 
+                atomically' $ sendOnNIC outFrame nic i
+                recordWithPort deviceName (address nic) i . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
+            where
+              handler (PortDisconnected _ _)
+                = return ()
+              handler e
+                = throwM e
+              
         void $ mapConcurrently forward indices
         
     -- Update mapping with host information.
