@@ -67,45 +67,16 @@ run
 run switch = do
   withAsync clearExpired . const . forever $ do 
     (portNum, frame) <- atomically' $ receiveOnNIC nic
-    let
-      broadcast = do
-        let
-          indices
-            = filter (/= portNum) [0 .. portCount nic - 1]
-          dest
-            = destinationAddr . destination $ frame
-          outFrame
-            = frame { destination = dest }
-          forward i
-            = handle handler $ do 
-                atomically' $ sendOnNIC outFrame nic i
-                recordWithPort deviceName (address nic) i . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
-            where
-              handler (PortDisconnected _ _)
-                = return ()
-              handler e
-                = throwM e
-              
-        void $ mapConcurrently forward indices
-        
-    -- Update mapping with host information.
-    now <- liftIO getCurrentTime
-    atomically' $ do
-      ageingTime' <- readTVar $ ageingTime switch
-      let
-        expireTime
-          = addUTCTime ageingTime' now
-      Map.insert (portNum, expireTime) (source frame) (mapping switch)
-    
+    updateMapping portNum (source frame)
     case destination frame of
       Broadcast -> do 
-        broadcast 
+        broadcast portNum frame
       Unicast dest ->
         when (dest /= address nic) $ do 
           port <- atomically' $ Map.lookup dest (mapping switch)
           case port of
             Nothing -> do
-              broadcast
+              broadcast portNum frame
             Just (port', _) -> do
               let
                 outFrame
@@ -115,6 +86,36 @@ run switch = do
   where
     nic
       = interface switch
+
+    updateMapping portNum sourceAddr = do 
+      now <- liftIO getCurrentTime
+      atomically' $ do
+        ageingTime' <- readTVar $ ageingTime switch
+        let
+          expireTime
+            = addUTCTime ageingTime' now
+        Map.insert (portNum, expireTime) sourceAddr (mapping switch)
+
+    -- Forward frame to every port excluding portNum.
+    broadcast portNum frame = do 
+      let
+        indices
+          = filter (/= portNum) [0 .. portCount nic - 1]
+        dest
+          = destinationAddr . destination $ frame
+        outFrame
+          = frame { destination = dest }
+        forward i
+          = handle handler $ do 
+              atomically' $ sendOnNIC outFrame nic i
+              recordWithPort deviceName (address nic) i . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
+          where
+            handler (PortDisconnected _ _)
+              = return ()
+            handler e
+              = throwM e
+            
+      void $ mapConcurrently forward indices
         
     clearExpired = do
       now <- liftIO getCurrentTime
