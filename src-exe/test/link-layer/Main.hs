@@ -269,6 +269,23 @@ main
                     atomically' $ sendOnNIC frame node0 0
                     result <- fmap (payload . snd) . atomically' $ receiveOnNIC node1
                     liftIO $ assertEqual "Transmitted payload does not equal message" defaultMessage result
+
+            , testCase "Hub operates when not fully connected" $ do
+                hub <- Hub.new 5
+                [node0, node1] <- replicateM 2 SimpleNode.new
+                connectNICs (SimpleNode.interface node0) (Hub.interface hub)
+                connectNICs (SimpleNode.interface node1) (Hub.interface hub)
+                withAsync (Hub.run hub) . const $ do
+                  void $ runConcurrently $ (,) 
+                    <$> ( Concurrently . SimpleNode.runOp node0 $ do 
+                            SimpleNode.send defaultMessage (address . SimpleNode.interface $ node1)
+                            void SimpleNode.receive
+                            
+                        )
+                    <*> ( Concurrently . SimpleNode.runOp node1 $ do
+                            void SimpleNode.receive
+                            SimpleNode.send defaultMessage (address . SimpleNode.interface $ node0)
+                        )
             ]
 
         , testGroup "Switch" 
@@ -315,6 +332,23 @@ main
                   liftIO $ do
                     assertEqual "Transmitted payload does not equal message" defaultMessage (payload frame0)
                     assertEqual "node2 should not receive frame destined for node0" Broadcast (destination frame2)
+                    
+            , testCase "Switch operates when not fully connected" $ do
+                sw <- Switch.new 5 Nothing
+                [node0, node1] <- replicateM 2 SimpleNode.new
+                connectNICs (SimpleNode.interface node0) (Switch.interface sw)
+                connectNICs (SimpleNode.interface node1) (Switch.interface sw)
+                withAsync (Switch.run sw) . const $ do
+                  void $ runConcurrently $ (,) 
+                    <$> ( Concurrently . SimpleNode.runOp node0 $ do 
+                            SimpleNode.send defaultMessage (address . SimpleNode.interface $ node1)
+                            void SimpleNode.receive
+                            
+                        )
+                    <*> ( Concurrently . SimpleNode.runOp node1 $ do
+                            void SimpleNode.receive
+                            SimpleNode.send defaultMessage (address . SimpleNode.interface $ node0)
+                        )
             
             , testCase "Switch recovers on host reconnect" $ do
                 [node0, node1, node2] <- replicateM 3 SimpleNode.new

@@ -18,9 +18,8 @@ import Control.Monad.Reader
 import Control.Monad.Trans.Control
 import Data.Monoid
 import qualified Data.Text as T
-import qualified Data.Vector as V
-import Data.Maybe
 import Data.Word
+import Control.Monad.Catch
 
 -- | A single-interface switch, indiscriminately copying a request
 -- on a port to every other port.
@@ -41,7 +40,7 @@ new n = do
   return $ Hub nic
 
 run
-  :: (MonadIO m, MonadBaseControl IO m, MonadLogger m)
+  :: (MonadIO m, MonadCatch m, MonadBaseControl IO m, MonadLogger m)
   => Hub
   -> m ()
 run (interface -> nic) = do
@@ -59,10 +58,14 @@ run (interface -> nic) = do
             = filter (/= portNum) [0 .. portCount nic - 1]
           outFrame
             = frame { destination = dest }
-          forward i = do
-            portInfo' <- atomically' $ do
-              sendOnNIC outFrame nic i
-              portInfo nic
-            when (fromMaybe False . fmap isConnected $ portInfo' V.!? (fromIntegral i)) $
-              recordWithPort deviceName (address nic) i . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
+          forward i
+            = handle handler $ do
+                atomically' $ sendOnNIC outFrame nic i
+                recordWithPort deviceName (address nic) i . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
+            where
+              handler (PortDisconnected _ _)
+                = return ()
+              handler e
+                = throwM e
+
         void $ mapConcurrently forward indices

@@ -70,7 +70,7 @@ data Frame a = Frame
   { destination :: !a 
   , source :: {-# UNPACK #-} !MAC 
   , payload :: !Payload
-  }
+  } deriving (Show)
 
 -- | An outbound Ethernet frame.
 type OutFrame = Frame MAC
@@ -199,6 +199,8 @@ connectNICs nic nic' = do
       when (isJust q) $
         throwM $ PortAlreadyConnected (mac nic) n
 
+-- | Will throw a 'PortDisconnected' exception if the port requested port
+-- is already disconnected.
 disconnectPort
   :: (MonadIO m, MonadLogger m)
   => NIC
@@ -222,6 +224,8 @@ disconnectPort nic n
               writeTVar (mate p) Nothing
         recordWithPort deviceName (mac nic) n $ "Disconnected port"
 
+-- | Will throw a 'PortDisconnected' exception if you try to send on a
+-- disconnected port.
 sendOnNIC
   :: OutFrame -- ^ The source MAC here is allowed to differ from the NIC's MAC.
   -> NIC
@@ -229,14 +233,14 @@ sendOnNIC
   -> STM ()
 sendOnNIC frame nic n 
   = case ports nic V.!? (fromIntegral n) of
-      Nothing -> 
+      Nothing ->
         -- TODO: alert user to index out of bounds error?
         return ()
       Just p -> do
         mate' <- readTVar (mate p)
         case mate' of
           Nothing ->
-            return ()
+            throwM $ PortDisconnected (mac nic) n
           Just q ->
             writeTQueue (buffer' q) frame
 

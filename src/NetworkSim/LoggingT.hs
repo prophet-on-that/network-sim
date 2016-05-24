@@ -13,6 +13,7 @@ module NetworkSim.LoggingT
   ( MonadLogger (..)
   , LoggingT ()
   , runLoggingT
+  , NoLoggingT (..)
   ) where
 
 import System.Log.FastLogger
@@ -54,3 +55,27 @@ runLoggingT
   -> m a
 runLoggingT loggerSet (LoggingT action)
   = runReaderT action loggerSet
+    
+newtype NoLoggingT m a = NoLoggingT
+  { runNoLoggingT :: m a
+  } deriving (Functor, Applicative, Monad, MonadIO, MonadBase b, MonadThrow, MonadCatch)
+
+instance MonadTrans NoLoggingT where
+  lift = NoLoggingT
+
+instance MonadTransControl NoLoggingT where
+  type StT NoLoggingT a = a
+  liftWith f = NoLoggingT $ f runNoLoggingT
+  restoreT = NoLoggingT
+
+instance MonadBaseControl b m => MonadBaseControl b (NoLoggingT m) where
+  type StM (NoLoggingT m) a = StM m a
+  liftBaseWith f
+    = NoLoggingT $
+        liftBaseWith $ \runInBase ->
+          f $ runInBase . runNoLoggingT
+  restoreM = NoLoggingT . restoreM
+
+instance Monad m => MonadLogger (NoLoggingT m) where
+  logMsg _
+    = return ()
