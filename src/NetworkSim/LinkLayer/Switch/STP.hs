@@ -44,6 +44,7 @@ import Control.Concurrent (threadDelay)
 import GHC.Exts (groupWith)
 import Data.List (sort)
 import Data.Maybe (fromMaybe)
+import Control.Monad.Catch
 
 deviceName
   = "STP Switch"
@@ -216,6 +217,7 @@ data NonRootSwitch = NonRootSwitch'
 data Notification
   = NewMessage {-# UNPACK #-} !PortNum !BPDU
   | Hello
+  | Recompute
 
 data CacheEntry = CacheEntry
   { timestamp :: {-# UNPACK #-} !UTCTime -- ^ Time at which the entry was installed into the cache.
@@ -268,7 +270,7 @@ new n prio = do
 
 -- | The status of the 'Switch' is re-initialised with each 'run'.
 run
-  :: (MonadIO m, MonadBaseControl IO m, MonadLogger m)
+  :: (MonadIO m, MonadBaseControl IO m, MonadLogger m, MonadCatch m)
   => Switch
   -> m ()
 run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatus' lastHello' switchHelloTime' switchForwardDelay') = do 
@@ -309,18 +311,29 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
       = portCount nic
         
     -- A wrapper around 'sendOnNIC' that ensure the port is in the
-    -- 'Forwarding' state before sending. The return value indicates
-    -- if the value was actually send.
-    sendOnPort
-      :: OutFrame
-      -> PortNum
-      -> STM Bool
+    -- 'Forwarding' state before sending, and to handle a port
+    -- disconnection. The return value indicates if the value was
+    -- actually send.
     sendOnPort frame i = do
-      av <- readTVar $ portAvailability' V.! (fromIntegral i)
+      let
+        tVar
+          = portAvailability' V.! (fromIntegral i)
+      av <- atomically' $ readTVar tVar
       case av of
         Available (status -> Forwarding) -> do
-          sendOnNIC frame nic i
-          return True
+          let
+            handler (PortDisconnected _ _) = do 
+              atomically' $ do
+                writeTVar tVar Disabled
+                writeTQueue notificationQueue' Recompute
+              recordWithPort deviceName (address nic) i "Exception raised when sending. Setting port to disabled."
+              return False
+            handler e
+              = throwM e
+                
+          handle handler $ do 
+            atomically' $ sendOnNIC frame nic i
+            return True
         _ ->
           return False
     
@@ -366,11 +379,8 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
         outFrame
           = frame { destination = dest }
 
-        -- TODO: catch exceptions when sending to transition to
-        -- disabled state, or poll portInfo vector. Exception catching
-        -- preferable allows avoiding logging.
         forward i = do
-          sent <- atomically' $ sendOnPort outFrame i
+          sent <- sendOnPort outFrame i
           when sent $
             recordWithPort deviceName (address nic) i . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
       
@@ -409,7 +419,7 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
                         = ConfigurationMessage False False iden' 0 iden' i 0 0 0 0
                       frame
                         = Frame stpAddr (switchAddr iden') . encode $ Configuration configurationMsg
-                    sent <- atomically' $ sendOnPort frame i
+                    sent <- sendOnPort frame i
                     when sent $
                       recordWithPort deviceName (switchAddr iden') i $ "Sending Hello: " <> showConfigurationMessage configurationMsg
                     
@@ -458,11 +468,14 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
                                 = ConfigurationMessage False False (rootPortId info) (cost info) iden' i 0 0 0 0
                               frame
                                 = Frame stpAddr (switchAddr iden') . encode $ Configuration configurationMsg
-                            sent <- atomically' $ sendOnPort frame i
+                            sent <- sendOnPort frame i
                             when sent $ 
                               recordWithPort deviceName (switchAddr iden') i $ "Sending configuration: " <> showConfigurationMessage configurationMsg
                         else
                           return ()
+                          
+            Recompute ->
+              recompute
       where
         -- 'recompute' is an atomic operation which requires an
         -- IO-based monadic type for logging only.
