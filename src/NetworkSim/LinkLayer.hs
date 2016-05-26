@@ -157,18 +157,19 @@ newNIC n promis = do
                 when (not written) $
                   recordWithPort deviceName (mac nic) i $ "Dropping frame destined for " <> (T.pack . show) dest
 
--- | Connect two NICs, using the first free port available for each.
+-- | Connect two NICs, using the first free port available for
+-- each. Returns these ports.
 connectNICs
   :: (MonadIO m, MonadThrow m, MonadLogger m)
   => NIC
   -> NIC
-  -> m ()
+  -> m (PortNum, PortNum)
 connectNICs nic nic' = do
   if nic == nic'
     then
       throwM $ ConnectToSelf (mac nic)
     else do
-      (portNum, portNum') <- atomically' $ do 
+      ports@(portNum, portNum') <- atomically' $ do 
         (fromIntegral -> portNum, p) <- firstFreePort nic
         (fromIntegral -> portNum', p') <- firstFreePort nic'
         checkDisconnected nic portNum p
@@ -177,6 +178,7 @@ connectNICs nic nic' = do
         writeTVar (mate p') (Just p)
         return (portNum, portNum')
       announce . T.pack $ "Connected " <> show (mac nic) <> "(" <> show portNum <> ") and " <> show (mac nic') <> "(" <> show portNum' <> ")"
+      return ports
   where
     firstFreePort nic = do
       free <- V.filterM hasFreePort . V.indexed $ ports nic
