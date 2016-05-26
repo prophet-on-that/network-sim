@@ -13,6 +13,8 @@ module NetworkSim.LinkLayer.Switch.STP
   , defaultHelloTime
   , switchForwardDelay
   , defaultForwardDelay
+  , switchMaxAge
+  , defaultMaxAge
   , new
   , run
   ) where
@@ -42,7 +44,7 @@ import Data.Ord
 import Data.Fixed
 import Control.Concurrent (threadDelay)
 import GHC.Exts (groupWith)
-import Data.List (sort)
+import Data.List (sort, intercalate)
 import Data.Maybe (fromMaybe)
 import Control.Monad.Catch
 
@@ -152,10 +154,12 @@ showConfigurationMessage
   -> T.Text
 showConfigurationMessage msg
   = T.intercalate "/"
-      [ T.pack . show . rootId $ msg
-      , T.pack . show . rootPathCost $ msg
-      , T.pack . show . switchId $ msg
-      , T.pack . show . portId $ msg
+      [ "root: " <> (T.pack . show . rootId) msg
+      , "cost: " <> (T.pack . show . rootPathCost) msg
+      , "age: " <> (T.pack . show . messageAge) msg
+      , "maxAge: " <> (T.pack . show . maxAge) msg
+      , "helloTime: " <> (T.pack . show . helloTime) msg
+      , "forwardDelay: " <> (T.pack . show . forwardDelay) msg
       ]
 
 data PortStatus
@@ -234,6 +238,7 @@ data Switch = Switch
   , lastHello :: !(TVar (Maybe UTCTime))
   , switchHelloTime :: !(TVar Word16) -- ^ Measured in 1/256 seconds.
   , switchForwardDelay :: !(TVar Word16) -- ^ Measured in 1/256 seconds.
+  , switchMaxAge :: !(TVar Word16) -- ^ Measured in 1/256 seconds.
   }
 
 iden
@@ -249,6 +254,10 @@ defaultHelloTime
 defaultForwardDelay :: Word16
 defaultForwardDelay
   = 3840
+
+defaultMaxAge :: Word16
+defaultMaxAge
+  = 5120 -- 20s.
 
 new
   :: (MonadIO m, MonadLogger m, MonadBaseControl IO m)
@@ -267,13 +276,14 @@ new n prio = do
     <*> newTVar Nothing
     <*> newTVar defaultHelloTime
     <*> newTVar defaultForwardDelay
+    <*> newTVar defaultMaxAge
 
 -- | The status of the 'Switch' is re-initialised with each 'run'.
 run
   :: (MonadIO m, MonadBaseControl IO m, MonadLogger m, MonadCatch m)
   => Switch
   -> m ()
-run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatus' lastHello' switchHelloTime' switchForwardDelay') = do 
+run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatus' lastHello' switchHelloTime' switchForwardDelay' switchMaxAge') = do 
   initialise
   withAsync timer . const $ 
     withAsync stpThread . const . forever $ do
@@ -413,10 +423,14 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
               ss <- atomically' $ readTVar switchStatus'
               case ss of
                 RootSwitch -> do
+                  (helloTime', forwardDelay', maxAge') <- atomically' $ (,,)
+                    <$> readTVar switchHelloTime'
+                    <*> readTVar switchForwardDelay'
+                    <*> readTVar switchMaxAge'
                   void $ forConcurrently [0 .. portCount' - 1] $ \i -> do
                     let
                       configurationMsg
-                        = ConfigurationMessage False False iden' 0 iden' i 0 0 0 0
+                        = ConfigurationMessage False False iden' 0 iden' i 0 maxAge' helloTime' forwardDelay'
                       frame
                         = Frame stpAddr (switchAddr iden') . encode $ Configuration configurationMsg
                     sent <- sendOnPort frame i
@@ -445,7 +459,7 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
                             writeTVar tVar . Available $ portData' { configuration = Just msg }
                             return True
                           Just msg' ->
-                            if msg > msg'
+                            if msg > msg' || messageAge msg < messageAge msg'
                               then do
                                 writeTVar tVar . Available $ portData' { configuration = Just msg }
                                 return True
@@ -465,7 +479,7 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
                           forM_ (designatedPorts info) $ \i -> do
                             let
                               configurationMsg
-                                = ConfigurationMessage False False (rootPortId info) (cost info) iden' i 0 0 0 0
+                                = ConfigurationMessage False False (rootPortId info) (cost info) iden' i 0 (maxAge msg) (helloTime msg) (forwardDelay msg)
                               frame
                                 = Frame stpAddr (switchAddr iden') . encode $ Configuration configurationMsg
                             sent <- sendOnPort frame i
@@ -602,8 +616,13 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
           now <- liftIO getCurrentTime
           atomically' $ checkHelloDue now
           updatePortStatus now
+          ageConfigurationMessages
           sleep
       where
+        -- multiples of 1/256 seconds.
+        period
+          = 1
+            
         checkHelloDue now = do 
           len <- readTVar switchHelloTime'
           t <- readTVar lastHello'
@@ -644,17 +663,42 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
                       return updated
               
               V.ifoldM' update [] portAvailability'
+
+        ageConfigurationMessages = do 
+          erased <- atomically' $ V.ifoldM' update [] portAvailability'
+          when (not . null $ erased) $ do
+            atomically' $ writeTQueue notificationQueue' Recompute
+            record deviceName (switchAddr iden') . T.pack $
+              "Erasing old configuration messages on port(s) " <> intercalate ", " (map show erased)
+          where
+            update erased (fromIntegral -> i) tv = do
+              av <- readTVar tv
+              case av of
+                Available pd@(configuration -> Just msg) -> do
+                  let
+                    newAge
+                      = messageAge msg + period
+                  if newAge >= maxAge msg
+                    then do
+                      writeTVar tv $ Available pd { configuration = Nothing }
+                      return $ i : erased
+                    else do
+                      let
+                        updatedMsg
+                          = msg { messageAge = newAge }
+                      writeTVar tv $ Available pd { configuration = Just updatedMsg }
+                      return erased
+
+                _ ->
+                  return erased
               
-        sleep 
+        sleep
           = liftIO $ do 
               now <- getCurrentTime
               let
                 remainder
-                  = utctDayTime now `mod'` freq
+                  = utctDayTime now `mod'` (fromIntegral period * 0.00390625)
               threadDelay . truncate $ remainder * 1000000
-          where
-            freq
-              = 0.00390625 -- 1/256 seconds.
 
 word16ToNominalDiffTime
   :: Word16
