@@ -13,12 +13,12 @@ import Control.Concurrent (threadDelay)
 
 main = do
   loggerSet <- newStdoutLoggerSet defaultBufSize
-  runLoggingT loggerSet star3
+  runLoggingT loggerSet switchLoop
 
 switchLoop :: LoggingT IO ()
 switchLoop = do 
   [sw0, sw1, sw2, sw3, sw4] <- replicateM 5 $ STP.new 10 STP.defaultPriority
-  connectNICs (STP.interface sw0) (STP.interface sw1)
+  (port0, _) <- connectNICs (STP.interface sw0) (STP.interface sw1)
   connectNICs (STP.interface sw1) (STP.interface sw2)
   connectNICs (STP.interface sw2) (STP.interface sw3)
   connectNICs (STP.interface sw3) (STP.interface sw4)
@@ -29,6 +29,9 @@ switchLoop = do
         withAsync (STP.run sw3) . const $ do
           withAsync (STP.run sw4) . const $ do
             liftIO . threadDelay $ 5 * 1000000
+            disconnectPort (STP.interface sw0) port0
+            -- disconnectPort (STP.interface sw0) port0'
+            liftIO . threadDelay $ 90 * 1000000
 
 star3 :: LoggingT IO ()
 star3 = do

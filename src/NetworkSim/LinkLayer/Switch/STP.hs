@@ -319,6 +319,9 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
         
     portCount'
       = portCount nic
+
+    portIndices
+      = [0 .. portCount' - 1]
         
     -- A wrapper around 'sendOnNIC' that ensure the port is in the
     -- 'Forwarding' state before sending, and to handle a port
@@ -383,7 +386,7 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
       = void $ mapConcurrently forward indices
       where
         indices
-          = filter (/= originPort) [0 .. portCount' - 1]
+          = filter (/= originPort) portIndices
         dest
           = destinationAddr . destination $ frame
         outFrame
@@ -427,7 +430,7 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
                     <$> readTVar switchHelloTime'
                     <*> readTVar switchForwardDelay'
                     <*> readTVar switchMaxAge'
-                  void $ forConcurrently [0 .. portCount' - 1] $ \i -> do
+                  void $ forConcurrently portIndices $ \i -> do
                     let
                       configurationMsg
                         = ConfigurationMessage False False iden' 0 iden' i 0 maxAge' helloTime' forwardDelay'
@@ -505,7 +508,7 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
           case ss of
             Just RootSwitch ->
               record deviceName (switchAddr iden') $ "STP recompute, switch is root"
-            Just (NonRootSwitch (NonRootSwitch' rootPort' rootPortId' designatedPorts' cost')) ->
+            Just (NonRootSwitch (NonRootSwitch' rootPort' rootPortId' designatedPorts' cost')) -> do 
               let
                 str
                   = if Set.null designatedPorts'
@@ -513,8 +516,7 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
                         "none"
                       else
                         T.intercalate ", " . map (T.pack . show) . Set.toList $ designatedPorts'
-              in 
-                record deviceName (switchAddr iden') $ "STP recompute, root is " <> (T.pack . show) rootPortId' <> " on local port #" <> (T.pack . show) rootPort' <> ", cost " <> (T.pack . show) cost' <> ". Designated ports: " <> str <> "."
+              record deviceName (switchAddr iden') $ "STP recompute, root is " <> (T.pack . show) rootPortId' <> " on local port #" <> (T.pack . show) rootPort' <> ", cost " <> (T.pack . show) cost' <> ". Designated ports: " <> str <> "."
             Nothing ->
               return ()
           
@@ -541,18 +543,7 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
                   if iden' > rootId'
                     then do
                       writeTVar switchStatus' RootSwitch
-              
-                      -- Set any blocked ports to 'Listening'.
-                      let
-                        unblockPort unblocked (fromIntegral -> i) tv = do 
-                          av <- readTVar tv
-                          case av of
-                            Available pd@(status -> Blocked) -> do 
-                              writeTVar tv . Available $ pd { status = Listening now }
-                              return $ (i, Listening now) : unblocked
-                            _ ->
-                              return unblocked
-                      V.ifoldM' unblockPort [] portAvailability'
+                      unblockPorts portIndices
                     else do
                       let
                         cost'
@@ -565,29 +556,57 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
                           = NonRootSwitch' rootPort' rootId' designatedPorts' cost'
                       writeTVar switchStatus' $ NonRootSwitch nonRootSwitch
               
-                      -- Set any ports not in the spanning tree to
-                      -- 'Blocked', if not already.
                       let
-                        blockPort blocked i = do
-                          let
-                            tv
-                              = portAvailability' V.! (fromIntegral i)
-                          av <- readTVar tv
-                          case av of
-                            Available pd ->
-                              if status pd /= Blocked
-                                then do 
-                                  writeTVar tv . Available $ pd { status = Blocked }
-                                  return $ (i, Blocked) : blocked
-                               else
-                                 return blocked
-                            _ ->
-                              return blocked
-                          
                         portsToBlock
-                          = filter (/= rootPort') . filter (not . flip Set.member designatedPorts') $ [0 .. portCount' - 1]
-                      foldlM blockPort [] portsToBlock
+                          = filter (/= rootPort') . filter (not . flip Set.member designatedPorts') $ portIndices
+                      blocked <- blockPorts portsToBlock
+                      unblocked <- unblockPorts $ Set.toList designatedPorts'
+                      return $ unblocked ++ blocked
               where
+                -- Unblock blocked ports, and return list of unblocked
+                -- ports.
+                unblockPorts
+                  :: [PortNum]
+                  -> STM [(PortNum, PortStatus)]
+                unblockPorts
+                  = foldlM helper []
+                  where
+                    helper unblocked i = do
+                      let
+                        tVar
+                          = portAvailability' V.! (fromIntegral i)
+                      av <- readTVar tVar
+                      case av of
+                        Available pd@(status -> Blocked) -> do 
+                          writeTVar tVar . Available $ pd { status = Listening now }
+                          return $ (i, Listening now) : unblocked
+                        _ ->
+                          return unblocked
+
+                -- Block unblocked ports, and return list of blocked
+                -- ports.
+                blockPorts
+                  :: [PortNum]
+                  -> STM [(PortNum, PortStatus)]
+                blockPorts
+                  = foldlM helper []
+                  where
+                    helper blocked i = do
+                      let
+                        tVar
+                          = portAvailability' V.! (fromIntegral i)
+                      av <- readTVar tVar
+                      case av of
+                        Available pd ->
+                          if status pd /= Blocked
+                            then do 
+                              writeTVar tVar . Available $ pd { status = Blocked }
+                              return $ (i, Blocked) : blocked
+                           else
+                             return blocked
+                        _ ->
+                          return blocked
+                
                 getMessageByPort msgs (fromIntegral -> portNum') tVar = do 
                   pa <- readTVar tVar
                   case pa of
