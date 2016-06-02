@@ -358,6 +358,7 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
         initialise' = do 
           initialisePortAvailability
           writeTVar switchStatus' RootSwitch
+          setPortConnectHook onPortConnect nic
           where
             initialisePortAvailability = do
               portInfo' <- portInfo nic
@@ -368,6 +369,11 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
                       Available $ PortData Forwarding Nothing
                     else
                       Disabled
+
+            onPortConnect :: PortConnectHook
+            onPortConnect _ portNum _ = do 
+              writeTVar (portAvailability' V.! (fromIntegral portNum)) (Available (PortData Blocked Nothing))
+              writeTQueue notificationQueue' Recompute
 
         logStatus = do
           let
@@ -533,14 +539,14 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
               if null bestMessages
                 then do
                   writeTVar switchStatus' RootSwitch
-                  return []
+                  unblockPorts portIndices
                 else do 
                   let
                     (rootPort', bestMsg)
                       = maximumBy (comparing snd) bestMessages
                     rootId'
                       = rootId bestMsg
-                  if iden' > rootId'
+                  if iden' >= rootId'
                     then do
                       writeTVar switchStatus' RootSwitch
                       unblockPorts portIndices
