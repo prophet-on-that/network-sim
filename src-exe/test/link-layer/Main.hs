@@ -26,6 +26,7 @@ import System.Log.FastLogger
 import Data.Time
 import Control.Concurrent (threadDelay)
 import Data.Word
+import Control.Concurrent.STM
 
 defaultMessage
   = "Hello, world!"
@@ -88,6 +89,25 @@ main
                     handle handler $ do 
                       connectNICs node0 node0
                       liftIO $ assertFailure "No exception thrown"
+
+                , testCase "Connecting NICs runs hooks" $ do
+                    [nic0, nic1] <- replicateM 2 $ newNIC 1 False
+                    [tVar0, tVar1] <- replicateM 2 $ atomically' (newTVar False)
+                    let
+                      action0 nic _ mac = do 
+                        writeTVar tVar0 $ nic == nic0 && mac == address nic1
+                      action1 nic _ mac = do 
+                        writeTVar tVar1 $ nic == nic1 && mac == address nic0
+                    atomically' $ do
+                      setPortConnectHook action0 nic0
+                      setPortConnectHook action1 nic1
+                    connectNICs nic0 nic1
+                    atomically' (readTVar tVar0) >>= liftIO . assertBool "Hook for nic0 has not set the correct value"
+                    atomically' (readTVar tVar0) >>= liftIO . assertBool "Hook for nic1 has not set the correct value"
+                    -- res <- atomically' $ do
+                    --   res0 
+                    --   -- (&&) <$> readTVar tVar0 <$> readTVar tVar1
+                    -- assertBool "Hooks have not set the appropriate values." res
                 ]
             
             , testGroup "Transmitting"
