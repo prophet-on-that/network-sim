@@ -29,6 +29,8 @@ module NetworkSim.LinkLayer
   , sendOnNIC
   , receiveOnNIC
   , setPromiscuity
+  , PortConnectHook 
+  , setPortConnectHook
     -- * Logging
   , module NetworkSim.LinkLayer.Logging
     -- * Utilities
@@ -111,12 +113,16 @@ getPortInfo
 getPortInfo
   = fmap (PortInfo . isJust) . readTVar . mate
 
+-- | First arg: the local NIC being connected. Second arg: the local port being connected. Third arg: the address of the remote NIC.
+type PortConnectHook = NIC -> PortNum -> MAC -> STM ()    
+
 -- | Network interface controller (NIC).
 data NIC = NIC
   { mac :: {-# UNPACK #-} !MAC
   , ports :: {-# UNPACK #-} !(Vector Port)
   , promiscuity :: !(TVar Bool)
   , buffer :: !(TQueue (PortNum, InFrame)) -- ^ Buffer of messages filtered by ports.
+  , portConnectHook :: !(TVar PortConnectHook) -- ^ Hook guaranteed to be executed atomically after successful 'connectNICs' action. 
   }
 
 instance Eq NIC where
@@ -133,7 +139,7 @@ newNIC
   -> m NIC
 newNIC n promis = do
   mac <- liftIO freshMAC
-  nic <- atomically' $ NIC mac <$> V.replicateM (fromIntegral n) newPort <*> newTVar promis <*> newTQueue
+  nic <- atomically' $ NIC mac <$> V.replicateM (fromIntegral n) newPort <*> newTVar promis <*> newTQueue <*> newTVar defaultHook
   V.imapM_ (\(fromIntegral -> i) p -> void . fork $ portAction nic i p) $ ports nic
   return nic
   where
@@ -157,6 +163,9 @@ newNIC n promis = do
                 when (not written) $
                   recordWithPort deviceName (mac nic) i $ "Dropping frame destined for " <> (T.pack . show) dest
 
+    defaultHook _ _ _
+      = return ()
+
 -- | Connect two NICs, using the first free port available for
 -- each. Returns these ports.
 connectNICs
@@ -176,6 +185,8 @@ connectNICs nic nic' = do
         checkDisconnected nic' portNum' p'
         writeTVar (mate p) (Just p')
         writeTVar (mate p') (Just p)
+        readTVar (portConnectHook nic) >>= \f -> f nic portNum (address nic')
+        readTVar (portConnectHook nic') >>= \f -> f nic' portNum' (address nic)
         return (portNum, portNum')
       announce . T.pack $ "Connected " <> show (mac nic) <> "(" <> show portNum <> ") and " <> show (mac nic') <> "(" <> show portNum' <> ")"
       return ports
@@ -272,6 +283,15 @@ setPromiscuity nic b = do
       else
         record deviceName (mac nic) $ "Disabling promiscuity mode"
 
+-- | Set a hook guaranteed to be run atomically after successful
+-- execution of 'connectNICs'.
+setPortConnectHook
+  :: PortConnectHook
+  -> NIC
+  -> STM ()
+setPortConnectHook h nic
+  = writeTVar (portConnectHook nic) h
+  
 address
   :: NIC
   -> MAC
