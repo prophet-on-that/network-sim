@@ -645,7 +645,7 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
           sleep
       where
         -- multiples of 1/256 seconds.
-        period
+        frequency
           = 1
             
         checkHelloDue now = do 
@@ -702,7 +702,7 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
                 Available pd@(configuration -> Just msg) -> do
                   let
                     newAge
-                      = messageAge msg + period
+                      = messageAge msg + frequency
                   if newAge >= maxAge msg
                     then do
                       writeTVar tv $ Available pd { configuration = Nothing }
@@ -721,8 +721,10 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
           = liftIO $ do 
               now <- getCurrentTime
               let
+                period
+                  = fromIntegral frequency * 0.00390625
                 remainder
-                  = utctDayTime now `mod'` (fromIntegral period * 0.00390625)
+                  = period - (utctDayTime now `mod'` period)
               threadDelay . truncate $ remainder * 1000000
 
 word16ToNominalDiffTime
