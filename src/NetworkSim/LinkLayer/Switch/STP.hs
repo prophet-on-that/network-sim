@@ -283,7 +283,7 @@ run
   :: (MonadIO m, MonadBaseControl IO m, MonadLogger m, MonadCatch m)
   => Switch
   -> m ()
-run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatus' lastHello' switchHelloTime' switchForwardDelay' switchMaxAge') = do 
+run switch@Switch {..} = do 
   initialise
   withAsync timer . const $ 
     withAsync stpThread . const . forever $ do
@@ -300,10 +300,10 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
                 Left (_, _, err) ->
                   recordWithPort deviceName (address nic) sourcePort . T.pack $ "Error when deserialising BPDU: " <> err
                 Right (_, _, bpdu) ->
-                  atomically' . writeTQueue notificationQueue' $ NewMessage sourcePort bpdu
+                  atomically' . writeTQueue notificationQueue $ NewMessage sourcePort bpdu
             else do
               when (dest /= address nic) $ do 
-                port <- atomically' $ Map.lookup dest cache'
+                port <- atomically' $ Map.lookup dest cache
                 case port of
                   Nothing -> do
                     broadcast sourcePort frame
@@ -314,6 +314,9 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
                     atomically' $ sendOnNIC outFrame nic port'
                     recordWithPort deviceName (address nic) port' . T.pack $ "Forwarding frame from " <> (show . source) frame <> " to " <> show dest
   where
+    nic
+      = interface
+        
     iden'
       = iden switch
         
@@ -330,7 +333,7 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
     sendOnPort frame i = do
       let
         tVar
-          = portAvailability' V.! (fromIntegral i)
+          = portAvailability V.! (fromIntegral i)
       av <- atomically' $ readTVar tVar
       case av of
         Available (status -> Forwarding) -> do
@@ -338,7 +341,7 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
             handler (PortDisconnected _ _) = do 
               atomically' $ do
                 writeTVar tVar Disabled
-                writeTQueue notificationQueue' Recompute
+                writeTQueue notificationQueue Recompute
               recordWithPort deviceName (address nic) i "Exception raised when sending. Setting port to disabled."
               return False
             handler e
@@ -357,13 +360,13 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
         initialise' :: STM ()
         initialise' = do 
           initialisePortAvailability
-          writeTVar switchStatus' RootSwitch
+          writeTVar switchStatus RootSwitch
           setPortConnectHook onPortConnect nic
           where
             initialisePortAvailability = do
               portInfo' <- portInfo nic
               V.forM_ (V.indexed portInfo') $ \(i, info) ->
-                writeTVar (portAvailability' V.! i) $
+                writeTVar (portAvailability V.! i) $
                   if isConnected info
                     then
                       Available $ PortData Forwarding Nothing
@@ -372,8 +375,8 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
 
             onPortConnect :: PortConnectHook
             onPortConnect _ portNum _ = do 
-              writeTVar (portAvailability' V.! (fromIntegral portNum)) (Available (PortData Blocked Nothing))
-              writeTQueue notificationQueue' Recompute
+              writeTVar (portAvailability V.! (fromIntegral portNum)) (Available (PortData Blocked Nothing))
+              writeTQueue notificationQueue Recompute
 
         logStatus = do
           let
@@ -384,7 +387,7 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
                   return $ i : ports
                 _ ->
                   return ports 
-          forwardingPorts <- atomically' $ V.ifoldM' readPort [] portAvailability'
+          forwardingPorts <- atomically' $ V.ifoldM' readPort [] portAvailability
           record deviceName (switchAddr iden') $ "Initialising as root switch with forwarding ports: " <> (T.intercalate ", " . map (T.pack . show) . sort) forwardingPorts
               
     -- Forward broadcast frame on ports in 'Forwarding' state.
@@ -411,13 +414,13 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
     updateCache source' portNum timestamp' = do
       let
         tvar
-          = portAvailability' V.! (fromIntegral portNum)
+          = portAvailability V.! (fromIntegral portNum)
       av <- readTVar tvar
       case av of
         Available pd ->
           if status pd == Forwarding || (isLearningStatus . status) pd
             then
-              Map.insert (CacheEntry timestamp' portNum) source' cache'
+              Map.insert (CacheEntry timestamp' portNum) source' cache
             else
               return ()
         Disabled -> 
@@ -426,16 +429,16 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
 
     stpThread 
       = forever $ do
-          notification' <- atomically' $ readTQueue notificationQueue'
+          notification' <- atomically' $ readTQueue notificationQueue
           case notification' of
             Hello -> do
-              ss <- atomically' $ readTVar switchStatus'
+              ss <- atomically' $ readTVar switchStatus
               case ss of
                 RootSwitch -> do
                   (helloTime', forwardDelay', maxAge') <- atomically' $ (,,)
-                    <$> readTVar switchHelloTime'
-                    <*> readTVar switchForwardDelay'
-                    <*> readTVar switchMaxAge'
+                    <$> readTVar switchHelloTime
+                    <*> readTVar switchForwardDelay
+                    <*> readTVar switchMaxAge
                   void $ forConcurrently portIndices $ \i -> do
                     let
                       configurationMsg
@@ -457,7 +460,7 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
                   bestMessageUpdated <- atomically' $ do
                     let
                       tVar
-                        = portAvailability' V.! (fromIntegral sourcePort)
+                        = portAvailability V.! (fromIntegral sourcePort)
                     pa <- readTVar tVar
                     case pa of
                       Disabled ->
@@ -477,7 +480,7 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
 
                   when bestMessageUpdated recompute
               
-                  ss <- atomically' $ readTVar switchStatus'
+                  ss <- atomically' $ readTVar switchStatus
                   case ss of
                     RootSwitch ->
                       -- TODO: further behaviour may be required here.
@@ -505,24 +508,24 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
         recompute = do 
           now <- liftIO getCurrentTime
           (ss, statusChanges) <- atomically' $ do
-            ssOld <- readTVar switchStatus' 
+            ssOld <- readTVar switchStatus 
             statusChanges <- recompute' now
-            ss <- readTVar switchStatus'
+            ss <- readTVar switchStatus
             return (mfilter (/= ssOld) $ Just ss, statusChanges)
 
           -- Log switch status.
           case ss of
             Just RootSwitch ->
               record deviceName (switchAddr iden') $ "STP recompute, switch is root"
-            Just (NonRootSwitch (NonRootSwitch' rootPort' rootPortId' designatedPorts' cost')) -> do 
+            Just (NonRootSwitch NonRootSwitch' {..}) -> do 
               let
                 str
-                  = if Set.null designatedPorts'
+                  = if Set.null designatedPorts
                       then
                         "none"
                       else
-                        T.intercalate ", " . map (T.pack . show) . Set.toList $ designatedPorts'
-              record deviceName (switchAddr iden') $ "STP recompute, root is " <> (T.pack . show) rootPortId' <> " on local port #" <> (T.pack . show) rootPort' <> ", cost " <> (T.pack . show) cost' <> ". Designated ports: " <> str <> "."
+                        T.intercalate ", " . map (T.pack . show) . Set.toList $ designatedPorts
+              record deviceName (switchAddr iden') $ "STP recompute, root is " <> (T.pack . show) rootPortId <> " on local port #" <> (T.pack . show) rootPort <> ", cost " <> (T.pack . show) cost <> ". Designated ports: " <> str <> "."
             Nothing ->
               return ()
           
@@ -532,13 +535,13 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
               :: UTCTime
               -> STM [(PortNum, PortStatus)]
             recompute' now = do
-              messages <- V.ifoldM getMessageByPort [] portAvailability'
+              messages <- V.ifoldM getMessageByPort [] portAvailability
               let
                 bestMessages
                   = [(i, msg) | (i, Just msg) <- messages]
               if null bestMessages
                 then do
-                  writeTVar switchStatus' RootSwitch
+                  writeTVar switchStatus RootSwitch
                   unblockPorts portIndices
                 else do 
                   let
@@ -548,7 +551,7 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
                       = rootId bestMsg
                   if iden' >= rootId'
                     then do
-                      writeTVar switchStatus' RootSwitch
+                      writeTVar switchStatus RootSwitch
                       unblockPorts portIndices
                     else do
                       let
@@ -560,7 +563,7 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
                           = Set.fromList . map fst . filter (fromMaybe True . fmap (dummyMessage >) . snd) $ messages
                         nonRootSwitch
                           = NonRootSwitch' rootPort' rootId' designatedPorts' cost'
-                      writeTVar switchStatus' $ NonRootSwitch nonRootSwitch
+                      writeTVar switchStatus $ NonRootSwitch nonRootSwitch
               
                       let
                         portsToBlock
@@ -580,7 +583,7 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
                     helper unblocked i = do
                       let
                         tVar
-                          = portAvailability' V.! (fromIntegral i)
+                          = portAvailability V.! (fromIntegral i)
                       av <- readTVar tVar
                       case av of
                         Available pd@(status -> Blocked) -> do 
@@ -600,7 +603,7 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
                     helper blocked i = do
                       let
                         tVar
-                          = portAvailability' V.! (fromIntegral i)
+                          = portAvailability V.! (fromIntegral i)
                       av <- readTVar tVar
                       case av of
                         Available pd ->
@@ -649,20 +652,20 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
           = 1
             
         checkHelloDue now = do 
-          len <- readTVar switchHelloTime'
-          t <- readTVar lastHello'
+          len <- readTVar switchHelloTime
+          t <- readTVar lastHello
           let
             helloDue
               = maybe True ((now >=) . addUTCTime (word16ToNominalDiffTime len)) t
           when helloDue $ do 
-            writeTQueue notificationQueue' Hello
-            writeTVar lastHello' $ Just now
+            writeTQueue notificationQueue Hello
+            writeTVar lastHello $ Just now
 
         updatePortStatus now
           = atomically' updatePortStatus' >>= logPortStatusChanges
           where
             updatePortStatus' = do 
-              forwardDelay' <- readTVar switchForwardDelay'
+              forwardDelay' <- readTVar switchForwardDelay
               let
                 update updated (fromIntegral -> i) tv = do
                   av <- readTVar tv
@@ -687,12 +690,12 @@ run switch@(Switch nic portAvailability' cache' notificationQueue' _ switchStatu
                     _ ->
                       return updated
               
-              V.ifoldM' update [] portAvailability'
+              V.ifoldM' update [] portAvailability
 
         ageConfigurationMessages = do 
-          erased <- atomically' $ V.ifoldM' update [] portAvailability'
+          erased <- atomically' $ V.ifoldM' update [] portAvailability
           when (not . null $ erased) $ do
-            atomically' $ writeTQueue notificationQueue' Recompute
+            atomically' $ writeTQueue notificationQueue Recompute
             record deviceName (switchAddr iden') . T.pack $
               "Erasing old configuration messages on port(s) " <> intercalate ", " (map show erased)
           where
